@@ -1,0 +1,5 @@
+__pycache__/
+log/
+wandb/
+enwik9
+enwik9.npy
