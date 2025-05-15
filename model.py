@@ -13,15 +13,10 @@ from muon import Muon
 @dataclass
 class GPTConfig:
 	context_length: int = 1024
-	vocab_size: int = 256
-	n_layer: int = 8
-	n_head: int = 8
+	vocab_size: int = 50256
+	n_layer: int = 4
+	n_head: int = 4
 	dim: int = 256
-	intermediate_size: int = 4*256
-
-	@property
-	def bos_token(self):
-		return self.vocab_size - 1
 
 	@property
 	def head_dim(self):
@@ -32,12 +27,10 @@ class TransformerBlock(nn.Module):
 		super().__init__()
 		self.attn = Attention(config)
 		self.mlp = FeedForward(config)
-		self.ln_1 = nn.LayerNorm(config.dim)
-		self.ln_2 = nn.LayerNorm(config.dim)
 
 	def forward(self, x: Tensor) -> Tensor:
-		h = x + self.attn(self.ln_1(x))
-		out = h + self.mlp(self.ln_2(h))
+		h = x + self.attn(F.rms_norm(x, (x.size(-1),)))
+		out = h + self.mlp(F.rms_norm(h, (h.size(-1),)))
 		return out
 
 class Attention(nn.Module):
@@ -48,6 +41,8 @@ class Attention(nn.Module):
 		# key, query, value projections for all heads, but in a batch
 		self.c_attn = nn.Linear(config.dim, 3*config.dim, bias=True)
 		self.c_proj = nn.Linear(config.dim, config.dim, bias=True)
+		self.c_proj.weight.data.zero_()
+		# self.c_proj.NANOGPT_SCALE_INIT = 1
 
 	def forward(self, x: Tensor) -> Tensor:
 		bsz, seqlen, _ = x.shape
@@ -67,11 +62,13 @@ class Attention(nn.Module):
 class FeedForward(nn.Module):
 	def __init__(self, config: GPTConfig) -> None:
 		super().__init__()
-		self.c_fc = nn.Linear(config.dim, config.intermediate_size, bias=True)
-		self.c_proj = nn.Linear(config.intermediate_size, config.dim, bias=True)
+		self.c_fc = nn.Linear(config.dim, 4*config.dim, bias=True)
+		self.c_proj = nn.Linear(4*config.dim, config.dim, bias=True)
+		self.c_proj.weight.data.zero_()
+		# self.c_proj.NANOGPT_SCALE_INIT = 1
 
 	def forward(self, x: Tensor) -> Tensor:
-		return self.c_proj(F.gelu(self.c_fc(x), approximate='tanh'))
+		return self.c_proj(F.relu(self.c_fc(x)).square())
 
 class GPT(nn.Module):
 	def __init__(self, config: GPTConfig=GPTConfig()) -> None:
@@ -82,14 +79,24 @@ class GPT(nn.Module):
 		'wte' : nn.Embedding(config.vocab_size, config.dim),
 		'wpe' : nn.Embedding(config.context_length, config.dim),
 		'h'   : nn.ModuleList(TransformerBlock(config) for _ in range(config.n_layer)),
-		'ln_f' : nn.LayerNorm(config.dim)
 		}
 
 		self.transformer = nn.ModuleDict(transformer)
-		self.lm_head = nn.Linear(config.dim, config.vocab_size, bias=True)
-		self.max_batch_size = -1
-		self.max_seq_length = -1
-		self.register_buffer("causal_mask", torch.tril(torch.ones(config.context_length, config.context_length, dtype=torch.bool)).view(1, 1, config.context_length, config.context_length))
+		self.lm_head = nn.Linear(config.dim, config.vocab_size, bias=False)
+		self.lm_head.weight.data.zero_()
+
+		# self.apply(self._init_weights)
+
+	# def _init_weights(self, module):
+	# 	if isinstance(module, nn.Linear):
+	# 		std = 0.02
+	# 		if hasattr(module, 'NANOGPT_SCALE_INIT'):
+	# 			std *= (2 * self.config.n_layer) ** -0.5
+	# 		torch.nn.init.normal_(module.weight, mean=0.0, std=std)
+	# 		if module.bias is not None:
+	# 			torch.nn.init.zeros_(module.bias)
+	# 	elif isinstance(module, nn.Embedding):
+	# 		torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
 	def forward(self, idx: Tensor) -> Tensor:
 		input_pos = torch.arange(idx.shape[1], device=idx.device)
@@ -99,11 +106,11 @@ class GPT(nn.Module):
 		for _, layer in enumerate(self.transformer.h):
 			x = layer(x)
 
-		x = self.transformer.ln_f(x)
+		x = F.rms_norm(x, (x.size(-1),))
 		logits = self.lm_head(x)
 		return logits
 	
-	def configure_optimizers(self, weight_decay, learning_rate, device_type):
+	def configure_optimizers(self, weight_decay, muon_lr, adamw_lr, device_type):
 		# start with all of the candidate parameters
 		param_dict = {pn: p for pn, p in self.named_parameters()}
 		# filter out those that do not require grad
@@ -130,6 +137,6 @@ class GPT(nn.Module):
 		muon_params = decay_params
 		adamw_params = nodecay_params
 
-		optimizers = [Muon(muon_params, lr=0.02, momentum=0.95), torch.optim.AdamW(adamw_params, lr=3e-4, betas=(0.90, 0.95), weight_decay=0.01)]
+		optimizers = [Muon(muon_params, lr=muon_lr, momentum=0.95), torch.optim.AdamW(adamw_params, lr=adamw_lr, betas=(0.90, 0.95), weight_decay=weight_decay)]
 
 		return optimizers
