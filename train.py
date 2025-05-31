@@ -96,35 +96,35 @@ wandb.init(
 )
 
 model = GPT()
-model = torch.compile(model)
+# model = torch.compile(model)
 model.to(device)
 model.train()
 
-max_steps = 4 * (312043861 // total_batch_size)
+max_steps = 312043861 // total_batch_size
 
-warmup_steps = 0
-def get_lr(it):
-    # 1) linear warmup for warmup_iters steps
-    if it < warmup_steps:
-        return 1.0 * (it+1) / warmup_steps
-    # 2) if it > lr_decay_iters, return min learning rate
-    if it > max_steps:
-        return 0.1
-    # 3) in between, use cosine decay down to min learning rate
-    decay_ratio = (it - warmup_steps) / (max_steps - warmup_steps)
-    assert 0 <= decay_ratio <= 1
-    coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff starts at 1 and goes to 0
-    return 0.1 + coeff * (1.0 - 0.1)
+# warmup_steps = 0
+# def get_lr(it):
+#     # 1) linear warmup for warmup_iters steps
+#     if it < warmup_steps:
+#         return 1.0 * (it+1) / warmup_steps
+#     # 2) if it > lr_decay_iters, return min learning rate
+#     if it > max_steps:
+#         return 0.1
+#     # 3) in between, use cosine decay down to min learning rate
+#     decay_ratio = (it - warmup_steps) / (max_steps - warmup_steps)
+#     assert 0 <= decay_ratio <= 1
+#     coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff starts at 1 and goes to 0
+#     return 0.1 + coeff * (1.0 - 0.1)
 
-# cooldown_frac = 0.4
-# def get_lr(step: int):
-#     x = step / max_steps # progress in training
-#     assert 0 <= x < 1
-#     if x < 1 - cooldown_frac:
-#         return 1.0
-#     else:
-#         w = (1 - x) / cooldown_frac
-#         return w * 1.0 + (1 - w) * 0.1
+cooldown_frac = 0.4
+def get_lr(step: int):
+    x = step / max_steps # progress in training
+    assert 0 <= x < 1
+    if x < 1 - cooldown_frac:
+        return 1.0
+    else:
+        w = (1 - x) / cooldown_frac
+        return w * 1.0 + (1 - w) * 0.1
 
 # optimize!
 optimizers = model.configure_optimizers(weight_decay=0.01, muon_lr=0.02, adamw_lr=3e-4, device_type=device_type)
@@ -170,7 +170,7 @@ for step in range(max_steps):
 		loss = loss / grad_accum_steps
 		loss_accum += loss.detach()
 		loss.backward()
-	norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+	# norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 	# determine and set the learning rate for this iteration
 	for opt in optimizers:
 		for group in opt.param_groups:

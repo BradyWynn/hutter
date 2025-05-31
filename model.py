@@ -29,8 +29,8 @@ class TransformerBlock(nn.Module):
 		self.mlp = FeedForward(config)
 
 	def forward(self, x: Tensor) -> Tensor:
-		h = x + self.attn(F.rms_norm(x, (x.size(-1),)))
-		out = h + self.mlp(F.rms_norm(h, (h.size(-1),)))
+		h = x + self.attn(F.layer_norm(x, (x.size(-1),)))
+		out = h + self.mlp(F.layer_norm(h, (h.size(-1),)))
 		return out
 
 class Attention(nn.Module):
@@ -41,8 +41,8 @@ class Attention(nn.Module):
 		# key, query, value projections for all heads, but in a batch
 		self.c_attn = nn.Linear(config.dim, 3*config.dim, bias=True)
 		self.c_proj = nn.Linear(config.dim, config.dim, bias=True)
-		self.c_proj.weight.data.zero_()
-		# self.c_proj.NANOGPT_SCALE_INIT = 1
+		# self.c_proj.weight.data.zero_()
+		self.c_proj.NANOGPT_SCALE_INIT = 1
 
 	def forward(self, x: Tensor) -> Tensor:
 		bsz, seqlen, _ = x.shape
@@ -64,8 +64,8 @@ class FeedForward(nn.Module):
 		super().__init__()
 		self.c_fc = nn.Linear(config.dim, 4*config.dim, bias=True)
 		self.c_proj = nn.Linear(4*config.dim, config.dim, bias=True)
-		self.c_proj.weight.data.zero_()
-		# self.c_proj.NANOGPT_SCALE_INIT = 1
+		# self.c_proj.weight.data.zero_()
+		self.c_proj.NANOGPT_SCALE_INIT = 1
 
 	def forward(self, x: Tensor) -> Tensor:
 		return self.c_proj(F.relu(self.c_fc(x)).square())
@@ -83,20 +83,20 @@ class GPT(nn.Module):
 
 		self.transformer = nn.ModuleDict(transformer)
 		self.lm_head = nn.Linear(config.dim, config.vocab_size, bias=False)
-		self.lm_head.weight.data.zero_()
+		# self.lm_head.weight.data.zero_()
 
-		# self.apply(self._init_weights)
+		self.apply(self._init_weights)
 
-	# def _init_weights(self, module):
-	# 	if isinstance(module, nn.Linear):
-	# 		std = 0.02
-	# 		if hasattr(module, 'NANOGPT_SCALE_INIT'):
-	# 			std *= (2 * self.config.n_layer) ** -0.5
-	# 		torch.nn.init.normal_(module.weight, mean=0.0, std=std)
-	# 		if module.bias is not None:
-	# 			torch.nn.init.zeros_(module.bias)
-	# 	elif isinstance(module, nn.Embedding):
-	# 		torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+	def _init_weights(self, module):
+		std = (self.config.dim)**-0.5
+		if isinstance(module, nn.Linear):
+			if hasattr(module, 'NANOGPT_SCALE_INIT'):
+				std *= (2 * self.config.n_layer) ** -0.5
+			torch.nn.init.normal_(module.weight, mean=0.0, std=std)
+			if module.bias is not None:
+				torch.nn.init.zeros_(module.bias)
+		elif isinstance(module, nn.Embedding):
+			torch.nn.init.normal_(module.weight, mean=0.0, std=std)
 
 	def forward(self, idx: Tensor) -> Tensor:
 		input_pos = torch.arange(idx.shape[1], device=idx.device)
@@ -106,7 +106,7 @@ class GPT(nn.Module):
 		for _, layer in enumerate(self.transformer.h):
 			x = layer(x)
 
-		x = F.rms_norm(x, (x.size(-1),))
+		x = F.layer_norm(x, (x.size(-1),))
 		logits = self.lm_head(x)
 		return logits
 	
