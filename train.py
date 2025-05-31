@@ -69,7 +69,7 @@ print(f"using device: {device}")
 device_type = "cuda" if device.startswith("cuda") else "cpu"
 
 total_batch_size = 2**20 # 2**19, ~0.5M, in number of tokens
-B = 8 # micro batch size
+B = 32 # micro batch size
 T = 1024 # sequence length
 assert total_batch_size % (B * T) == 0, "make sure total_batch_size is divisible by B * T"
 grad_accum_steps = total_batch_size // (B * T)
@@ -89,7 +89,7 @@ wandb.init(
 	"vocab_size": GPTConfig.vocab_size,
 	"n_layer": GPTConfig.n_layer,
 	"n_head": GPTConfig.n_head,
-	"dim": GPTConfig.dim,
+	"n_embd": GPTConfig.n_embd,
 	"total_batch_size": total_batch_size,
 	"B": B
 	}
@@ -184,7 +184,7 @@ for step in range(max_steps):
 	dt = t1 - t0 # time difference in seconds
 	tokens_processed = train_loader.B * train_loader.T * grad_accum_steps
 	tokens_per_sec = tokens_processed / dt
-	print(f"step {step:5d} | loss: {loss_accum.item():.6f} | lr {get_lr(step):.4e} | norm: {norm:.4f} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
+	print(f"step {step:5d} | loss: {loss_accum.item():.6f} | lr {get_lr(step):.4e} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
 	wandb.log({"loss": loss_accum.item(), "lr": get_lr(step)})
 
 # sweep_config = {

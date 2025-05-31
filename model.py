@@ -16,59 +16,65 @@ class GPTConfig:
 	vocab_size: int = 50256
 	n_layer: int = 4
 	n_head: int = 4
-	dim: int = 256
+	n_embd: int = 256
 
 	@property
-	def head_dim(self):
-		return self.dim // self.n_head
+	def head_n_embd(self):
+		return self.n_embd // self.n_head
+
+def rmsnorm(x0, eps=1e-6):
+    x = x0.float()
+    x = x * torch.rsqrt(x.pow(2).mean(-1, keepn_embd=True) + eps)
+    return x.type_as(x0)
 
 class TransformerBlock(nn.Module):
 	def __init__(self, config: GPTConfig) -> None:
 		super().__init__()
 		self.attn = Attention(config)
 		self.mlp = FeedForward(config)
+		self.attn_scale = (1 / (2 * config.n_layer)**0.5)
 
 	def forward(self, x: Tensor) -> Tensor:
-		h = x + self.attn(F.layer_norm(x, (x.size(-1),)))
-		out = h + self.mlp(F.layer_norm(h, (h.size(-1),)))
-		return out
+		x = x + self.attn_scale * self.attn(rmsnorm(x))
+		x = x + self.mlp(rmsnorm(x))
+		return x
 
 class Attention(nn.Module):
 	def __init__(self, config: GPTConfig):
 		super().__init__()
-		assert config.dim % config.n_head == 0
+		assert config.n_embd % config.n_head == 0
 		self.config = config
 		# key, query, value projections for all heads, but in a batch
-		self.c_attn = nn.Linear(config.dim, 3*config.dim, bias=True)
-		self.c_proj = nn.Linear(config.dim, config.dim, bias=True)
+		self.c_attn = nn.Linear(config.n_embd, 3*config.n_embd, bias=True)
+		self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=True)
 		# self.c_proj.weight.data.zero_()
 		self.c_proj.NANOGPT_SCALE_INIT = 1
 
 	def forward(self, x: Tensor) -> Tensor:
 		bsz, seqlen, _ = x.shape
 
-		q, k, v = self.c_attn(x).split([self.config.dim, self.config.dim, self.config.dim], dim=-1)
+		q, k, v = self.c_attn(x).split([self.config.n_embd, self.config.n_embd, self.config.n_embd], n_embd=-1)
 
-		q = q.view(bsz, seqlen, self.config.n_head, self.config.head_dim)
-		k = k.view(bsz, seqlen, self.config.n_head, self.config.head_dim)
-		v = v.view(bsz, seqlen, self.config.n_head, self.config.head_dim)
+		q = q.view(bsz, seqlen, self.config.n_head, self.config.head_n_embd)
+		k = k.view(bsz, seqlen, self.config.n_head, self.config.head_n_embd)
+		v = v.view(bsz, seqlen, self.config.n_head, self.config.head_n_embd)
 
 		q, k, v = map(lambda x: x.transpose(1, 2), (q, k, v))
 
 		y = F.scaled_dot_product_attention(q, k, v, is_causal=True, dropout_p=0.0)
-		y = y.transpose(1, 2).contiguous().view(bsz, seqlen, self.config.dim)
+		y = y.transpose(1, 2).contiguous().view(bsz, seqlen, self.config.n_embd)
 		return self.c_proj(y)
 
 class FeedForward(nn.Module):
 	def __init__(self, config: GPTConfig) -> None:
 		super().__init__()
-		self.c_fc = nn.Linear(config.dim, 4*config.dim, bias=True)
-		self.c_proj = nn.Linear(4*config.dim, config.dim, bias=True)
+		self.c_fc = nn.Linear(config.n_embd, 4*config.n_embd, bias=False)
+		self.c_proj = nn.Linear(4*config.n_embd, config.n_embd, bias=False)
 		# self.c_proj.weight.data.zero_()
 		self.c_proj.NANOGPT_SCALE_INIT = 1
 
 	def forward(self, x: Tensor) -> Tensor:
-		return self.c_proj(F.relu(self.c_fc(x)).square())
+		return self.c_proj(F.gelu(self.c_fc(x)))
 
 class GPT(nn.Module):
 	def __init__(self, config: GPTConfig=GPTConfig()) -> None:
@@ -76,27 +82,25 @@ class GPT(nn.Module):
 		self.config = config
 
 		transformer = {
-		'wte' : nn.Embedding(config.vocab_size, config.dim),
-		'wpe' : nn.Embedding(config.context_length, config.dim),
+		'wte' : nn.Embedding(config.vocab_size, config.n_embd),
+		'wpe' : nn.Embedding(config.context_length, config.n_embd),
 		'h'   : nn.ModuleList(TransformerBlock(config) for _ in range(config.n_layer)),
 		}
 
 		self.transformer = nn.ModuleDict(transformer)
-		self.lm_head = nn.Linear(config.dim, config.vocab_size, bias=False)
+		self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+		self.transformer.wte.weight = self.lm_head.weight
 		# self.lm_head.weight.data.zero_()
 
 		self.apply(self._init_weights)
 
 	def _init_weights(self, module):
-		std = (self.config.dim)**-0.5
 		if isinstance(module, nn.Linear):
-			if hasattr(module, 'NANOGPT_SCALE_INIT'):
-				std *= (2 * self.config.n_layer) ** -0.5
-			torch.nn.init.normal_(module.weight, mean=0.0, std=std)
+			torch.nn.init.normal_(module.weight, mean=0.0, std=(self.config.n_embd)**-0.5)
 			if module.bias is not None:
 				torch.nn.init.zeros_(module.bias)
 		elif isinstance(module, nn.Embedding):
-			torch.nn.init.normal_(module.weight, mean=0.0, std=std)
+			torch.nn.init.normal_(module.weight, mean=0.0, std=(self.config.n_embd)**-0.5)
 
 	def forward(self, idx: Tensor) -> Tensor:
 		input_pos = torch.arange(idx.shape[1], device=idx.device)
@@ -106,7 +110,7 @@ class GPT(nn.Module):
 		for _, layer in enumerate(self.transformer.h):
 			x = layer(x)
 
-		x = F.layer_norm(x, (x.size(-1),))
+		x = F.rms_norm(x, (x.size(-1),))
 		logits = self.lm_head(x)
 		return logits
 	
