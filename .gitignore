@@ -4,3 +4,4 @@ wandb/
 enwik9
 enwik9.npy
 tokenized_enwik9.npy
+*.zip
