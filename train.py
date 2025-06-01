@@ -7,6 +7,7 @@ from torch.nn import functional as F
 import numpy as np
 from model import GPT, GPTConfig
 import wandb
+from muon import SingleDeviceMuon
 
 def load_tokens():
 	tokens = np.load("tokenized_enwik9.npy")
@@ -68,7 +69,7 @@ print(f"using device: {device}")
 # added after video, pytorch can be serious about it's device vs. device_type distinction
 device_type = "cuda" if device.startswith("cuda") else "cpu"
 
-total_batch_size = 2**20 # 2**19, ~0.5M, in number of tokens
+total_batch_size = 2**18 # 2**19, ~0.5M, in number of tokens
 B = 32 # micro batch size
 T = 1024 # sequence length
 assert total_batch_size % (B * T) == 0, "make sure total_batch_size is divisible by B * T"
@@ -127,11 +128,25 @@ def get_lr(step: int):
         return w * 1.0 + (1 - w) * 0.1
 
 # optimize!
-optimizers = model.configure_optimizers(weight_decay=0.01, muon_lr=0.02, adamw_lr=3e-4, device_type=device_type)
+# optimizers = model.configure_optimizers(weight_decay=0.01, muon_lr=0.02, adamw_lr=3e-4, device_type=device_type)
 
-for opt in optimizers:
-	for group in opt.param_groups:
-		group["initial_lr"] = group["lr"]
+# init the optimizer(s)
+optimizer1 = torch.optim.AdamW(
+	model.lm_head.parameters(),
+	lr= 0.0036,
+	betas=(0.9, 0.95),
+	weight_decay=0.0,
+)
+optimizer2 = SingleDeviceMuon(
+	model.transformer.h.parameters(),
+	lr=0.1 *  0.0036,
+	momentum=0.95,
+)
+optimizers = [optimizer1, optimizer2]
+
+# for opt in optimizers:
+# 	for group in opt.param_groups:
+# 		group["initial_lr"] = group["lr"]
 
 # create the log directory we will write checkpoints to and log to
 log_dir = "log"

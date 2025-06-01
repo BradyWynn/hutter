@@ -1,4 +1,6 @@
 import torch
+import torch.distributed as dist
+
 
 def zeropower_via_newtonschulz5(G, steps: int):
     """
@@ -70,16 +72,17 @@ class Muon(torch.optim.Optimizer):
     def step(self):
         for group in self.param_groups:
             params = group["params"]
-            params_pad = params + [torch.empty_like(params[-1])] * (len(params))
-            for base_i in range(len(params)):
-                if base_i < len(params):
-                    p = params[base_i]
+            params_pad = params + [torch.empty_like(params[-1])] * (len(params) % dist.get_world_size())
+            for base_i in range(len(params))[::dist.get_world_size()]:
+                if base_i + dist.get_rank() < len(params):
+                    p = params[base_i + dist.get_rank()]
                     state = self.state[p]
                     if len(state) == 0:
                         state["momentum_buffer"] = torch.zeros_like(p)
                     update = muon_update(p.grad, state["momentum_buffer"], beta=group["momentum"])
                     p.mul_(1 - group["lr"] * group["weight_decay"])
                     p.add_(update, alpha=-group["lr"])
+                dist.all_gather(params_pad[base_i:base_i + dist.get_world_size()], params_pad[base_i + dist.get_rank()])
 
 
 class SingleDeviceMuon(torch.optim.Optimizer):
@@ -161,16 +164,17 @@ class MuonWithAuxAdam(torch.optim.Optimizer):
         for group in self.param_groups:
             if group["use_muon"]:
                 params = group["params"]
-                params_pad = params + [torch.empty_like(params[-1])] * (len(params))
-                for base_i in range(len(params)):
-                    if base_i < len(params):
-                        p = params[base_i]
+                params_pad = params + [torch.empty_like(params[-1])] * (len(params) % dist.get_world_size())
+                for base_i in range(len(params))[::dist.get_world_size()]:
+                    if base_i + dist.get_rank() < len(params):
+                        p = params[base_i + dist.get_rank()]
                         state = self.state[p]
                         if len(state) == 0:
                             state["momentum_buffer"] = torch.zeros_like(p)
                         update = muon_update(p.grad, state["momentum_buffer"], beta=group["momentum"])
                         p.mul_(1 - group["lr"] * group["weight_decay"])
                         p.add_(update, alpha=-group["lr"])
+                    dist.all_gather(params_pad[base_i:base_i + dist.get_world_size()], params_pad[base_i + dist.get_rank()])
             else:
                 beta1, beta2 = group["betas"]
                 for p in group["params"]:

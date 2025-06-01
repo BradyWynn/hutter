@@ -8,7 +8,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 from torch import Tensor
 import inspect
-from muon import Muon
+# from muon import SingleDeviceMuon
 
 @dataclass
 class GPTConfig:
@@ -22,10 +22,8 @@ class GPTConfig:
 	def head_n_embd(self):
 		return self.n_embd // self.n_head
 
-def rmsnorm(x0, eps=1e-6):
-    x = x0.float()
-    x = x * torch.rsqrt(x.pow(2).mean(-1, keepn_embd=True) + eps)
-    return x.type_as(x0)
+def norm(x):
+	return F.rms_norm(x, (x.size(-1),))
 
 class TransformerBlock(nn.Module):
 	def __init__(self, config: GPTConfig) -> None:
@@ -35,8 +33,8 @@ class TransformerBlock(nn.Module):
 		self.attn_scale = (1 / (2 * config.n_layer)**0.5)
 
 	def forward(self, x: Tensor) -> Tensor:
-		x = x + self.attn_scale * self.attn(rmsnorm(x))
-		x = x + self.mlp(rmsnorm(x))
+		x = x + self.attn_scale * self.attn(norm(x))
+		x = x + self.mlp(norm(x))
 		return x
 
 class Attention(nn.Module):
@@ -45,10 +43,9 @@ class Attention(nn.Module):
 		assert config.n_embd % config.n_head == 0
 		self.config = config
 		# key, query, value projections for all heads, but in a batch
-		self.c_attn = nn.Linear(config.n_embd, 3*config.n_embd, bias=True)
-		self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=True)
+		self.c_attn = nn.Linear(config.n_embd, 3*config.n_embd, bias=False)
+		self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
 		# self.c_proj.weight.data.zero_()
-		self.c_proj.NANOGPT_SCALE_INIT = 1
 
 	def forward(self, x: Tensor) -> Tensor:
 		bsz, seqlen, _ = x.shape
@@ -71,7 +68,6 @@ class FeedForward(nn.Module):
 		self.c_fc = nn.Linear(config.n_embd, 4*config.n_embd, bias=False)
 		self.c_proj = nn.Linear(4*config.n_embd, config.n_embd, bias=False)
 		# self.c_proj.weight.data.zero_()
-		self.c_proj.NANOGPT_SCALE_INIT = 1
 
 	def forward(self, x: Tensor) -> Tensor:
 		return self.c_proj(F.gelu(self.c_fc(x)))
@@ -110,37 +106,37 @@ class GPT(nn.Module):
 		for _, layer in enumerate(self.transformer.h):
 			x = layer(x)
 
-		x = F.rms_norm(x, (x.size(-1),))
+		x = norm(x)
 		logits = self.lm_head(x)
 		return logits
 	
-	def configure_optimizers(self, weight_decay, muon_lr, adamw_lr, device_type):
-		# start with all of the candidate parameters
-		param_dict = {pn: p for pn, p in self.named_parameters()}
-		# filter out those that do not require grad
-		param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
-		# create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
-		# i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
-		decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
-		nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
-		optim_groups = [
-			{'params': decay_params, 'weight_decay': weight_decay},
-			{'params': nodecay_params, 'weight_decay': 0.0}
-		]
-		num_decay_params = sum(p.numel() for p in decay_params)
-		num_nodecay_params = sum(p.numel() for p in nodecay_params)
-		print(f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters")
-		print(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
-		# Create AdamW optimizer and use the fused version if it is available
-		fused_available = 'fused' in inspect.signature(torch.optim.AdamW).parameters
-		use_fused = fused_available and device_type == 'cuda'
-		# extra_args = dict(fused=True) if use_fused else dict()
-		# optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, **extra_args)
-		print(f"using fused AdamW: {use_fused}")
+	# def configure_optimizers(self, weight_decay, muon_lr, adamw_lr, device_type):
+	# 	# start with all of the candidate parameters
+	# 	param_dict = {pn: p for pn, p in self.named_parameters()}
+	# 	# filter out those that do not require grad
+	# 	param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
+	# 	# create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
+	# 	# i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
+	# 	decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+	# 	nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+	# 	optim_groups = [
+	# 		{'params': decay_params, 'weight_decay': weight_decay},
+	# 		{'params': nodecay_params, 'weight_decay': 0.0}
+	# 	]
+	# 	num_decay_params = sum(p.numel() for p in decay_params)
+	# 	num_nodecay_params = sum(p.numel() for p in nodecay_params)
+	# 	print(f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters")
+	# 	print(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
+	# 	# Create AdamW optimizer and use the fused version if it is available
+	# 	fused_available = 'fused' in inspect.signature(torch.optim.AdamW).parameters
+	# 	use_fused = fused_available and device_type == 'cuda'
+	# 	# extra_args = dict(fused=True) if use_fused else dict()
+	# 	# optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, **extra_args)
+	# 	print(f"using fused AdamW: {use_fused}")
 
-		muon_params = decay_params
-		adamw_params = nodecay_params
+	# 	muon_params = decay_params
+	# 	adamw_params = nodecay_params
 
-		optimizers = [Muon(muon_params, lr=muon_lr, momentum=0.95), torch.optim.AdamW(adamw_params, lr=adamw_lr, betas=(0.90, 0.95), weight_decay=weight_decay)]
+	# 	optimizers = [SingleDeviceMuon(muon_params, lr=muon_lr, momentum=0.95), torch.optim.AdamW(adamw_params, lr=adamw_lr, betas=(0.90, 0.95), weight_decay=weight_decay)]
 
-		return optimizers
+	# 	return optimizers
