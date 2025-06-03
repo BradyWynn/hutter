@@ -1,5 +1,6 @@
 #!/bin/bash
 
+apt update
 apt-get install zip unzip
 wget http://mattmahoney.net/dc/enwik9.zip
 unzip enwik9.zip

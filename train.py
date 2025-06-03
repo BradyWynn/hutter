@@ -1,8 +1,6 @@
 import os
-import math
 import time
 import torch
-import torch.nn as nn
 from torch.nn import functional as F
 import numpy as np
 from model import GPT, GPTConfig
@@ -127,26 +125,30 @@ def get_lr(step: int):
         w = (1 - x) / cooldown_frac
         return w * 1.0 + (1 - w) * 0.1
 
-# optimize!
-# optimizers = model.configure_optimizers(weight_decay=0.01, muon_lr=0.02, adamw_lr=3e-4, device_type=device_type)
-
 # init the optimizer(s)
 optimizer1 = torch.optim.AdamW(
 	model.lm_head.parameters(),
-	lr= 0.0036,
+	lr=0.007430834736125724,
 	betas=(0.9, 0.95),
 	weight_decay=0.0,
 )
 optimizer2 = SingleDeviceMuon(
 	model.transformer.h.parameters(),
-	lr=0.1 *  0.0036,
+	lr=0.015122230946631943,
 	momentum=0.95,
 )
-optimizers = [optimizer1, optimizer2]
+optimizer3 = torch.optim.AdamW(
+	model.transformer.wpe.parameters(),
+	lr=0.002311346693455771,
+	betas=(0.9, 0.95),
+	weight_decay=0.0,
+)
 
-# for opt in optimizers:
-# 	for group in opt.param_groups:
-# 		group["initial_lr"] = group["lr"]
+optimizers = [optimizer1, optimizer2, optimizer3]
+
+for opt in optimizers:
+	for group in opt.param_groups:
+		group["initial_lr"] = group["lr"]
 
 # create the log directory we will write checkpoints to and log to
 log_dir = "log"
