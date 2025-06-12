@@ -22,6 +22,35 @@ class GPTConfig:
 def norm(x):
 	return F.rms_norm(x, (x.size(-1),))
 
+class Rotary(torch.nn.Module):
+	def __init__(self, dim, base=10000):
+		super().__init__()
+		inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
+		self.register_buffer('inv_freq', inv_freq)
+		self.seq_len_cached = None
+		self.cos_cached = None
+		self.sin_cached = None
+
+	def forward(self, x):
+		seq_len = x.shape[1]
+		if seq_len != self.seq_len_cached:
+			self.seq_len_cached = seq_len
+			t = torch.arange(seq_len, device=x.device).type_as(self.inv_freq)
+			freqs = torch.outer(t, self.inv_freq).to(x.device)
+			self.cos_cached = freqs.cos()
+			self.sin_cached = freqs.sin()
+		return self.cos_cached[None, :, None, :], self.sin_cached[None, :, None, :]
+
+
+def apply_rotary_emb(x, cos, sin):
+	assert x.ndim == 4  # multihead attention
+	d = x.shape[3] // 2
+	x1 = x[..., :d]
+	x2 = x[..., d:]
+	y1 = x1 * cos + x2 * sin
+	y2 = x1 * (-sin) + x2 * cos
+	return torch.cat([y1, y2], 3).type_as(x)
+
 class TransformerBlock(nn.Module):
 	def __init__(self, config: GPTConfig) -> None:
 		super().__init__()
@@ -42,6 +71,7 @@ class Attention(nn.Module):
 		# key, query, value projections for all heads, but in a batch
 		self.c_attn = nn.Linear(config.n_embd, 3*config.n_embd, bias=False)
 		self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
+		self.rotary = Rotary(config.n_embd//config.n_head)
 		# self.c_proj.weight.data.zero_()
 
 	def forward(self, x: Tensor) -> Tensor:
@@ -52,6 +82,9 @@ class Attention(nn.Module):
 		q = q.view(bsz, seqlen, self.config.n_head, self.config.head_n_embd)
 		k = k.view(bsz, seqlen, self.config.n_head, self.config.head_n_embd)
 		v = v.view(bsz, seqlen, self.config.n_head, self.config.head_n_embd)
+
+		cos, sin = self.rotary(q)
+		q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
 
 		q, k, v = map(lambda x: x.transpose(1, 2), (q, k, v))
 
@@ -76,7 +109,6 @@ class GPT(nn.Module):
 
 		transformer = {
 		'wte' : nn.Embedding(config.vocab_size, config.n_embd),
-		'wpe' : nn.Embedding(config.context_length, config.n_embd),
 		'h'   : nn.ModuleList(TransformerBlock(config) for _ in range(config.n_layer)),
 		}
 
@@ -96,9 +128,7 @@ class GPT(nn.Module):
 			torch.nn.init.normal_(module.weight, mean=0.0, std=(self.config.n_embd)**-0.5)
 
 	def forward(self, idx: Tensor) -> Tensor:
-		input_pos = torch.arange(idx.shape[1], device=idx.device)
-
-		x = self.transformer.wte(idx) + self.transformer.wpe(input_pos)
+		x = self.transformer.wte(idx)
 
 		for layer in self.transformer.h:
 			x = layer(x)

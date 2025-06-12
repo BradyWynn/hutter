@@ -10,53 +10,36 @@ from muon import SingleDeviceMuon
 def load_tokens():
 	tokens = np.load("tokenized_enwik9.npy")
 	tokens = torch.tensor(tokens, dtype=torch.long)
-	return tokens.flatten()
+	return tokens
 
 class DataLoaderLite:
-    def __init__(self, B, T, split):
-        self.B = B  # batch size
-        self.T = T  # sequence length
-        self.reset()
-    
-    def reset(self):
-        # state, init at shard zero
-        self.current_shard = 0
-        self.tokens = None
-        self.tokens = load_tokens()
-        
-        # Calculate number of complete sequences we can make
-        self.n_sequences = len(self.tokens) // self.T
-        
-        # Create sequence starting indices and shuffle them
-        self.sequence_indices = np.arange(0, self.n_sequences * self.T, self.T)
-        np.random.shuffle(self.sequence_indices)
-        
-        # Track which sequences we've used
-        self.current_batch_idx = 0
-        
-    def next_batch(self):
-        B, T = self.B, self.T
-        
-        # If we've used all sequences, reset and reshuffle
-        if self.current_batch_idx + B >= len(self.sequence_indices):
-            self.reset()
-        
-        # Get the starting indices for this batch
-        batch_start_indices = self.sequence_indices[self.current_batch_idx:self.current_batch_idx + B]
-        
-        # Initialize tensors for the batch
-        x = torch.zeros((B, T), dtype=self.tokens.dtype)
-        y = torch.zeros((B, T), dtype=self.tokens.dtype)
-        
-        # Fill the batch
-        for i, start_idx in enumerate(batch_start_indices):
-            x[i] = self.tokens[start_idx:start_idx + T]
-            y[i] = self.tokens[start_idx + 1:start_idx + T + 1]
-        
-        # Advance batch counter
-        self.current_batch_idx += B
-        
-        return x, y
+	def __init__(self, B, T, split=None):
+		self.B = B
+		self.T = T
+		self.tokens = load_tokens()
+		self.reset()
+
+	def reset(self):
+		total_len = len(self.tokens)
+		self.n_sequences = (total_len - 1) // self.T
+		all_starts = torch.arange(self.n_sequences) * self.T
+		perm = torch.randperm(self.n_sequences)
+		self.sequence_indices = all_starts[perm]
+		self.current_batch_idx = 0
+
+	def next_batch(self):
+		if self.current_batch_idx + self.B >= len(self.sequence_indices):
+			self.reset()
+
+		idx = self.sequence_indices[self.current_batch_idx : self.current_batch_idx + self.B]
+		self.current_batch_idx += self.B
+
+		offsets = torch.arange(self.T)
+		idx = idx.unsqueeze(1) + offsets
+		x = self.tokens[idx]
+		y = self.tokens[idx + 1]
+
+		return x, y
 
 # attempt to autodetect device
 device = "cpu"
@@ -117,13 +100,13 @@ max_steps = 312043861 // total_batch_size
 
 cooldown_frac = 0.4
 def get_lr(step: int):
-    x = step / max_steps # progress in training
-    assert 0 <= x < 1
-    if x < 1 - cooldown_frac:
-        return 1.0
-    else:
-        w = (1 - x) / cooldown_frac
-        return w * 1.0 + (1 - w) * 0.1
+	x = step / max_steps # progress in training
+	assert 0 <= x < 1
+	if x < 1 - cooldown_frac:
+		return 1.0
+	else:
+		w = (1 - x) / cooldown_frac
+		return w * 1.0 + (1 - w) * 0.1
 
 # init the optimizer(s)
 optimizer1 = torch.optim.AdamW(
