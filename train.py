@@ -13,7 +13,7 @@ def load_tokens():
 	return tokens
 
 class DataLoaderLite:
-	def __init__(self, B, T, split=None):
+	def __init__(self, B, T):
 		self.B = B
 		self.T = T
 		self.tokens = load_tokens()
@@ -120,14 +120,8 @@ optimizer2 = SingleDeviceMuon(
 	lr=0.015122230946631943,
 	momentum=0.95,
 )
-optimizer3 = torch.optim.AdamW(
-	model.transformer.wpe.parameters(),
-	lr=0.002311346693455771,
-	betas=(0.9, 0.95),
-	weight_decay=0.0,
-)
 
-optimizers = [optimizer1, optimizer2, optimizer3]
+optimizers = [optimizer1, optimizer2]
 
 for opt in optimizers:
 	for group in opt.param_groups:

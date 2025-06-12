@@ -71,7 +71,7 @@ class Attention(nn.Module):
 		# key, query, value projections for all heads, but in a batch
 		self.c_attn = nn.Linear(config.n_embd, 3*config.n_embd, bias=False)
 		self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
-		self.rotary = Rotary(config.n_embd//config.n_head)
+		self.rotary = Rotary(config.head_n_embd)
 		# self.c_proj.weight.data.zero_()
 
 	def forward(self, x: Tensor) -> Tensor:
