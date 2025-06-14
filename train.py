@@ -58,7 +58,7 @@ grad_accum_steps = total_batch_size // (B * T)
 print(f"total desired batch size: {total_batch_size}")
 print(f"=> calculated gradient accumulation steps: {grad_accum_steps}")
 
-train_loader = DataLoaderLite(B=B, T=T, split="train")
+train_loader = DataLoaderLite(B=B, T=T)
 
 torch.set_float32_matmul_precision('high')
 
@@ -78,25 +78,11 @@ wandb.init(
 )
 
 model = GPT()
-# model = torch.compile(model)
+model = torch.compile(model)
 model.to(device)
 model.train()
 
-max_steps = 312043861 // total_batch_size
-
-# warmup_steps = 0
-# def get_lr(it):
-#     # 1) linear warmup for warmup_iters steps
-#     if it < warmup_steps:
-#         return 1.0 * (it+1) / warmup_steps
-#     # 2) if it > lr_decay_iters, return min learning rate
-#     if it > max_steps:
-#         return 0.1
-#     # 3) in between, use cosine decay down to min learning rate
-#     decay_ratio = (it - warmup_steps) / (max_steps - warmup_steps)
-#     assert 0 <= decay_ratio <= 1
-#     coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff starts at 1 and goes to 0
-#     return 0.1 + coeff * (1.0 - 0.1)
+max_steps = len(train_loader.tokens) // total_batch_size
 
 cooldown_frac = 0.4
 def get_lr(step: int):
@@ -111,13 +97,13 @@ def get_lr(step: int):
 # init the optimizer(s)
 optimizer1 = torch.optim.AdamW(
 	model.lm_head.parameters(),
-	lr=0.007430834736125724,
+	lr=0.008847293888235502,
 	betas=(0.9, 0.95),
 	weight_decay=0.0,
 )
 optimizer2 = SingleDeviceMuon(
 	model.transformer.h.parameters(),
-	lr=0.015122230946631943,
+	lr=0.03268883417940545,
 	momentum=0.95,
 )
 
