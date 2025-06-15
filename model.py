@@ -100,7 +100,7 @@ class FeedForward(nn.Module):
 		# self.c_proj.weight.data.zero_()
 
 	def forward(self, x: Tensor) -> Tensor:
-		return self.c_proj(F.gelu(self.c_fc(x)))
+		return self.c_proj(F.gelu(self.c_fc(x), approximate='tanh'))
 
 class GPT(nn.Module):
 	def __init__(self, config: GPTConfig=GPTConfig()) -> None:
