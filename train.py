@@ -97,13 +97,14 @@ def get_lr(step: int):
 # init the optimizer(s)
 optimizer1 = torch.optim.AdamW(
 	model.lm_head.parameters(),
-	lr=0.008847293888235502,
+	lr=0.008,
 	betas=(0.9, 0.95),
-	weight_decay=0.0,
+	weight_decay=0.01,
+	fused=True
 )
 optimizer2 = SingleDeviceMuon(
 	model.transformer.h.parameters(),
-	lr=0.03268883417940545,
+	lr=0.02,
 	momentum=0.95,
 )
 
