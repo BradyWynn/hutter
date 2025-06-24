@@ -13,7 +13,7 @@ class GPTConfig:
 	vocab_size: int = 50256
 	n_layer: int = 4
 	n_head: int = 4
-	n_embd: int = 256
+	n_embd: int = 512
 
 	@property
 	def head_n_embd(self):
@@ -72,7 +72,7 @@ class Attention(nn.Module):
 		self.c_attn = nn.Linear(config.n_embd, 3*config.n_embd, bias=False)
 		self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
 		self.rotary = Rotary(config.head_n_embd)
-		# self.c_proj.weight.data.zero_()
+		self.c_proj.weight.data.zero_()
 
 	def forward(self, x: Tensor) -> Tensor:
 		bsz, seqlen, _ = x.shape
@@ -97,7 +97,7 @@ class FeedForward(nn.Module):
 		super().__init__()
 		self.c_fc = nn.Linear(config.n_embd, 4*config.n_embd, bias=False)
 		self.c_proj = nn.Linear(4*config.n_embd, config.n_embd, bias=False)
-		# self.c_proj.weight.data.zero_()
+		self.c_proj.weight.data.zero_()
 
 	def forward(self, x: Tensor) -> Tensor:
 		return self.c_proj(F.gelu(self.c_fc(x), approximate='tanh'))
@@ -114,8 +114,8 @@ class GPT(nn.Module):
 
 		self.transformer = nn.ModuleDict(transformer)
 		self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-		self.transformer.wte.weight = self.lm_head.weight
-		# self.lm_head.weight.data.zero_()
+		# self.transformer.wte.weight = self.lm_head.weight
+		self.lm_head.weight.data.zero_()
 
 		self.apply(self._init_weights)
 

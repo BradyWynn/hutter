@@ -77,10 +77,9 @@ wandb.init(
 	}
 )
 
-model = GPT()
-model = torch.compile(model)
-model.to(device)
-model.train()
+raw_model = GPT()
+raw_model = raw_model.to(device).bfloat16()
+model = torch.compile(raw_model)
 
 max_steps = len(train_loader.tokens) // total_batch_size
 
@@ -95,20 +94,12 @@ def get_lr(step: int):
 		return w * 1.0 + (1 - w) * 0.1
 
 # init the optimizer(s)
-optimizer1 = torch.optim.AdamW(
-	model.lm_head.parameters(),
-	lr=0.008,
-	betas=(0.9, 0.95),
-	weight_decay=0.01,
-	fused=True
-)
-optimizer2 = SingleDeviceMuon(
-	model.transformer.h.parameters(),
-	lr=0.02,
-	momentum=0.95,
-)
-
-optimizers = [optimizer1, optimizer2]
+optimizer1 = torch.optim.Adam([raw_model.transformer.wte.weight], lr=0.3,   betas=(0.9, 0.95), fused=True)
+optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=0.002, betas=(0.9, 0.95), fused=True)
+params = list(raw_model.transformer.h.parameters())
+matrix_params = [p for p in params if p.ndim == 2]
+optimizer3 = SingleDeviceMuon(matrix_params, lr=0.02,  momentum=0.95)
+optimizers = [optimizer1, optimizer2, optimizer3]
 
 for opt in optimizers:
 	for group in opt.param_groups:
@@ -126,7 +117,7 @@ for step in range(max_steps):
 		# optionally write model checkpoints
 		checkpoint_path = os.path.join(log_dir, f"model_{step:05d}.pt")
 		checkpoint = {
-			'model': model.state_dict(),
+			'model': raw_model.state_dict(),
 			'config': model.config,
 			'step': step,
 		}
