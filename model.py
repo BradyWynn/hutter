@@ -14,6 +14,7 @@ class GPTConfig:
 	n_layer: int = 4
 	n_head: int = 4
 	n_embd: int = 512
+	tokens_per_step: int = 4
 
 	@property
 	def head_n_embd(self):
@@ -113,11 +114,11 @@ class GPT(nn.Module):
 		}
 
 		self.transformer = nn.ModuleDict(transformer)
-		self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+		self.lm_head = nn.Linear(config.n_embd, config.vocab_size * config.tokens_per_step, bias=False)
 		# self.transformer.wte.weight = self.lm_head.weight
 		self.lm_head.weight.data.zero_()
 
-		self.apply(self._init_weights)
+		# self.apply(self._init_weights)
 
 	def _init_weights(self, module):
 		if isinstance(module, nn.Linear):
@@ -135,4 +136,5 @@ class GPT(nn.Module):
 
 		x = norm(x)
 		logits = self.lm_head(x)
-		return logits
+		B, T, _ = logits.shape
+		return logits.view(B, T, self.config.tokens_per_step, self.config.vocab_size)

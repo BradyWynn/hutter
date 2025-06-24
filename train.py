@@ -13,32 +13,30 @@ def load_tokens():
 	return tokens
 
 class DataLoaderLite:
-	def __init__(self, B, T):
-		self.B = B
-		self.T = T
+	def __init__(self, B, T, K):
+		self.B, self.T, self.K = B, T, K
 		self.tokens = load_tokens()
 		self.reset()
 
 	def reset(self):
-		total_len = len(self.tokens)
-		self.n_sequences = (total_len - 1) // self.T
-		all_starts = torch.arange(self.n_sequences) * self.T
-		perm = torch.randperm(self.n_sequences)
-		self.sequence_indices = all_starts[perm]
+		total_len   = len(self.tokens)
+		n_sequences = (total_len - self.K - 1) // self.T
+		seq0  = torch.arange(n_sequences) * self.T
+		self.sequence_indices = seq0[torch.randperm(n_sequences)]
 		self.current_batch_idx = 0
 
 	def next_batch(self):
 		if self.current_batch_idx + self.B >= len(self.sequence_indices):
 			self.reset()
 
-		idx = self.sequence_indices[self.current_batch_idx : self.current_batch_idx + self.B]
+		starts = self.sequence_indices[self.current_batch_idx:self.current_batch_idx + self.B]
 		self.current_batch_idx += self.B
 
-		offsets = torch.arange(self.T)
-		idx = idx.unsqueeze(1) + offsets
-		x = self.tokens[idx]
-		y = self.tokens[idx + 1]
+		offs = torch.arange(self.T)
+		idx = starts[:, None] + offs
 
+		x = self.tokens[idx]
+		y = torch.stack([self.tokens[idx + k + 1] for k in range(self.K)], dim=-1)
 		return x, y
 
 # attempt to autodetect device
@@ -58,7 +56,7 @@ grad_accum_steps = total_batch_size // (B * T)
 print(f"total desired batch size: {total_batch_size}")
 print(f"=> calculated gradient accumulation steps: {grad_accum_steps}")
 
-train_loader = DataLoaderLite(B=B, T=T)
+train_loader = DataLoaderLite(B=B, T=T, K=4)
 
 torch.set_float32_matmul_precision('high')
 
