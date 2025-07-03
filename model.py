@@ -42,7 +42,6 @@ class Rotary(torch.nn.Module):
 			self.sin_cached = freqs.sin()
 		return self.cos_cached[None, :, None, :], self.sin_cached[None, :, None, :]
 
-
 def apply_rotary_emb(x, cos, sin):
 	assert x.ndim == 4  # multihead attention
 	d = x.shape[3] // 2
@@ -111,22 +110,12 @@ class GPT(nn.Module):
 		transformer = {
 		'wte' : nn.Embedding(config.vocab_size, config.n_embd),
 		'h'   : nn.ModuleList(TransformerBlock(config) for _ in range(config.n_layer)),
+		'hmt' : nn.ModuleList(nn.Linear(config.n_embd, config.n_embd) for _ in range(config.n_multi_token))
 		}
 
 		self.transformer = nn.ModuleDict(transformer)
-		self.lm_head = nn.Linear(config.n_embd, config.vocab_size * config.tokens_per_step, bias=False)
-		# self.transformer.wte.weight = self.lm_head.weight
+		self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 		self.lm_head.weight.data.zero_()
-
-		# self.apply(self._init_weights)
-
-	def _init_weights(self, module):
-		if isinstance(module, nn.Linear):
-			torch.nn.init.normal_(module.weight, mean=0.0, std=(self.config.n_embd)**-0.5)
-			if module.bias is not None:
-				torch.nn.init.zeros_(module.bias)
-		elif isinstance(module, nn.Embedding):
-			torch.nn.init.normal_(module.weight, mean=0.0, std=(self.config.n_embd)**-0.5)
 
 	def forward(self, idx: Tensor) -> Tensor:
 		x = self.transformer.wte(idx)
@@ -135,6 +124,9 @@ class GPT(nn.Module):
 			x = layer(x)
 
 		x = norm(x)
-		logits = self.lm_head(x)
-		B, T, _ = logits.shape
-		return logits.view(B, T, self.config.tokens_per_step, self.config.vocab_size)
+		logit_list = []
+		for layer in self.transformer.hmt:
+			logits = self.lm_head(layer(x))
+			logit_list.append(logits)
+		logit_list = torch.stack(logit_list)
+		return logit_list

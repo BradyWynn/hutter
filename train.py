@@ -16,27 +16,11 @@ class DataLoaderLite:
 	def __init__(self, B, T, K):
 		self.B, self.T, self.K = B, T, K
 		self.tokens = load_tokens()
-		self.reset()
-
-	def reset(self):
-		total_len   = len(self.tokens)
-		n_sequences = (total_len - self.K - 1) // self.T
-		seq0  = torch.arange(n_sequences) * self.T
-		self.sequence_indices = seq0[torch.randperm(n_sequences)]
-		self.current_batch_idx = 0
 
 	def next_batch(self):
-		if self.current_batch_idx + self.B >= len(self.sequence_indices):
-			self.reset()
-
-		starts = self.sequence_indices[self.current_batch_idx:self.current_batch_idx + self.B]
-		self.current_batch_idx += self.B
-
-		offs = torch.arange(self.T)
-		idx = starts[:, None] + offs
-
-		x = self.tokens[idx]
-		y = torch.stack([self.tokens[idx + k + 1] for k in range(self.K)], dim=-1)
+		ix = torch.randint(len(self.tokens) - self.T, (self.B,))
+		x = torch.stack([torch.from_numpy((self.tokens[i:i+self.T]).astype(np.int64)) for i in ix])
+		y = torch.stack([torch.stack([self.tokens[i+j+1:i+j+1+self.T] for j in range(self.K)], dim=-1) for i in ix])
 		return x, y
 
 # attempt to autodetect device
