@@ -14,7 +14,7 @@ class GPTConfig:
 	n_layer: int = 4
 	n_head: int = 4
 	n_embd: int = 512
-	tokens_per_step: int = 4
+	n_multi_token: int = 4
 
 	@property
 	def head_n_embd(self):

@@ -19,7 +19,7 @@ class DataLoaderLite:
 
 	def next_batch(self):
 		ix = torch.randint(len(self.tokens) - self.T, (self.B,))
-		x = torch.stack([torch.from_numpy((self.tokens[i:i+self.T]).astype(np.int64)) for i in ix])
+		x = torch.stack([self.tokens[i:i+self.T] for i in ix])
 		y = torch.stack([torch.stack([self.tokens[i+j+1:i+j+1+self.T] for j in range(self.K)], dim=-1) for i in ix])
 		return x, y
 
