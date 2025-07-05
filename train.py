@@ -20,7 +20,7 @@ class DataLoaderLite:
 	def next_batch(self):
 		ix = torch.randint(len(self.tokens) - self.T, (self.B,))
 		x = torch.stack([self.tokens[i:i+self.T] for i in ix])
-		y = torch.stack([torch.stack([self.tokens[i+j+1:i+j+1+self.T] for j in range(self.K)], dim=-1) for i in ix])
+		y = torch.stack([torch.stack([self.tokens[i+j+1:i+j+1+self.T] for j in range(self.K)]) for i in ix])
 		return x, y
 
 # attempt to autodetect device
@@ -115,15 +115,9 @@ for step in range(max_steps):
 		x, y = x.to(device), y.to(device)
 		# added after video, this field is also used by the forward pass.
 		with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-			logits = model(x)
-		loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1), ignore_index=-1)
-		# we have to scale the loss to account for gradient accumulation,
-		# because the gradients just add on each successive backward().
-		# addition of gradients corresponds to a SUM in the objective, but
-		# instead of a SUM we want MEAN. Scale the loss here so it comes out right
+			loss = model(x)
 		loss = loss / grad_accum_steps
 		loss_accum += loss.detach()
-		loss.backward()
 	# norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 	# determine and set the learning rate for this iteration
 	for opt in optimizers:

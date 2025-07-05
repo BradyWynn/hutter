@@ -110,23 +110,26 @@ class GPT(nn.Module):
 		transformer = {
 		'wte' : nn.Embedding(config.vocab_size, config.n_embd),
 		'h'   : nn.ModuleList(TransformerBlock(config) for _ in range(config.n_layer)),
-		'hmt' : nn.ModuleList(nn.Linear(config.n_embd, config.n_embd) for _ in range(config.n_multi_token))
+		'hmt' : nn.ModuleList(TransformerBlock(config) for _ in range(config.n_multi_token))
 		}
 
 		self.transformer = nn.ModuleDict(transformer)
 		self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 		self.lm_head.weight.data.zero_()
 
-	def forward(self, idx: Tensor) -> Tensor:
+	def forward(self, idx: Tensor, targets: Tensor) -> Tensor:
 		x = self.transformer.wte(idx)
 
 		for layer in self.transformer.h:
 			x = layer(x)
 
 		x = norm(x)
-		logit_list = []
-		for layer in self.transformer.hmt:
+		loss_accum = 0.0
+		for i, layer in enumerate(self.transformer.hmt):
 			logits = self.lm_head(layer(x))
-			logit_list.append(logits)
-		logit_list = torch.stack(logit_list)
-		return logit_list
+			loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets[i].view(-1), ignore_index=-1)
+			loss = loss / self.config.n_multi_token
+			loss_accum += loss.detach()
+			loss.backward()
+
+		return loss_accum
