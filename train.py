@@ -20,7 +20,7 @@ class DataLoaderLite:
 	def next_batch(self):
 		ix = torch.randint(len(self.tokens) - self.T, (self.B,))
 		x = torch.stack([self.tokens[i:i+self.T] for i in ix])
-		y = torch.stack([torch.stack([self.tokens[i+j+1:i+j+1+self.T] for j in range(self.K)]) for i in ix])
+		y = torch.stack([torch.stack([self.tokens[i+j+1:i+j+1+self.T] for j in range(self.K)]) for i in ix], dim=1)
 		return x, y
 
 # attempt to autodetect device
@@ -115,8 +115,9 @@ for step in range(max_steps):
 		x, y = x.to(device), y.to(device)
 		# added after video, this field is also used by the forward pass.
 		with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-			loss = model(x)
+			loss = model(x, y)
 		loss = loss / grad_accum_steps
+		loss.backward()
 		loss_accum += loss.detach()
 	# norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 	# determine and set the learning rate for this iteration
@@ -134,22 +135,3 @@ for step in range(max_steps):
 	tokens_per_sec = tokens_processed / dt
 	print(f"step {step:5d} | loss: {loss_accum.item():.6f} | lr {get_lr(step):.4e} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
 	wandb.log({"loss": loss_accum.item(), "lr": get_lr(step)})
-
-# sweep_config = {
-#     'method': 'bayes',
-# 	'metric': {
-# 		'name': 'loss',
-# 		'goal': 'minimize'
-# 	},
-# 	'parameters': {
-# 		'muon_lr': {'distribution': 'uniform', 'min': 0.0001, 'max': 0.5},
-# 		'adamw_lr': {'distribution': 'uniform', 'min': 0.00001, 'max': 0.01},
-# 		'weight_decay': {'distribution': 'uniform', 'min': 0.0001, 'max': 0.1},
-# 	}
-#     }
-
-# sweep_id = wandb.sweep(sweep_config, project="calebgpt")
-
-# print(sweep_id)
-
-# wandb.agent("tpit7q9f", train)

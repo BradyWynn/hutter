@@ -129,7 +129,6 @@ class GPT(nn.Module):
 			logits = self.lm_head(layer(x))
 			loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets[i].view(-1), ignore_index=-1)
 			loss = loss / self.config.n_multi_token
-			loss_accum += loss.detach()
-			loss.backward()
+			loss_accum += loss
 
 		return loss_accum
