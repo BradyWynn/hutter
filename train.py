@@ -115,10 +115,11 @@ for step in range(max_steps):
 		x, y = x.to(device), y.to(device)
 		# added after video, this field is also used by the forward pass.
 		with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-			loss = model(x, y)
+			logits = model(x, y)
+		loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1), ignore_index=-1)
 		loss = loss / grad_accum_steps
-		loss.backward()
 		loss_accum += loss.detach()
+		loss.backward()
 	# norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 	# determine and set the learning rate for this iteration
 	for opt in optimizers:

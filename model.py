@@ -14,7 +14,6 @@ class GPTConfig:
 	n_layer: int = 4
 	n_head: int = 4
 	n_embd: int = 512
-	n_multi_token: int = 4
 
 	@property
 	def head_n_embd(self):
@@ -110,7 +109,6 @@ class GPT(nn.Module):
 		transformer = {
 		'wte' : nn.Embedding(config.vocab_size, config.n_embd),
 		'h'   : nn.ModuleList(TransformerBlock(config) for _ in range(config.n_layer)),
-		'hmt' : nn.ModuleList(TransformerBlock(config) for _ in range(config.n_multi_token))
 		}
 
 		self.transformer = nn.ModuleDict(transformer)
@@ -124,11 +122,5 @@ class GPT(nn.Module):
 			x = layer(x)
 
 		x = norm(x)
-		loss_accum = 0.0
-		for i, layer in enumerate(self.transformer.hmt):
-			logits = self.lm_head(layer(x))
-			loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets[i].view(-1), ignore_index=-1)
-			loss = loss / self.config.n_multi_token
-			loss_accum += loss
-
-		return loss_accum
+		logits = self.lm_head(x)
+		return logits
