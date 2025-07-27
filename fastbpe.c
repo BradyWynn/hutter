@@ -2,38 +2,64 @@
 #include <stdlib.h>
 #include <math.h>
 
+#define TABLE_SIZE 200000
+
 FILE *data;
 FILE *file;
 
 typedef struct {
-	int first;
-	int second;
-	int count;
-} Bigram;
+    int first;
+    int second;
+    int count;
+    int used;
+} BigramEntry;
 
-Bigram get_bigram(short* arr, int size){
-	int counts[512][512] = {0};
-	Bigram bigram;
+BigramEntry table[TABLE_SIZE];
 
-	for(int i = 0; i < (size-1); i++){
-		counts[arr[i]][arr[i+1]] += 1;
-	}
-
-	int highest_value = 0;
-	for (int i = 0; i < 512; i++){
-		for (int j = 0; j < 512; j++){
-			if (counts[i][j] > highest_value){
-				highest_value = counts[i][j];
-				bigram.first = i;
-				bigram.second = j;
-				bigram.count = counts[i][j];
-			}
-		}
-	}
-	return bigram;
+unsigned int hash(int a, int b) {
+    return ((a * 2654435761u) ^ (b * 40503u)) % TABLE_SIZE;
 }
 
-int replace_bigram(short* arr, Bigram bigram, int size, int new_token){
+BigramEntry get_bigram(short* arr, int size){
+	for (int i = 0; i < TABLE_SIZE; ++i) {
+        table[i].count = 0;
+        table[i].used = 0;
+    }
+
+    for (int i = 0; i < size - 1; ++i) {
+        int a = arr[i];
+        int b = arr[i + 1];
+        unsigned int h = hash(a, b);
+
+        while (1) {
+            if (!table[h].used) {
+                table[h].first = a;
+                table[h].second = b;
+                table[h].count = 1;
+                table[h].used = 1;
+                break;
+            } else if (table[h].first == a && table[h].second == b) {
+                table[h].count++;
+                break;
+            } else {
+                h = (h + 1) % TABLE_SIZE;
+            }
+        }
+    }
+
+    int max_count = 0;
+    int max_a = 0, max_b = 0;
+    for (int i = 0; i < TABLE_SIZE; ++i) {
+        if (table[i].used && table[i].count > max_count) {
+            max_count = table[i].count;
+            max_a = table[i].first;
+            max_b = table[i].second;
+        }
+    }
+	return table[hash(max_a, max_b)];
+}
+
+int replace_bigram(short* arr, BigramEntry bigram, int size, int new_token){
 	int count = 0;
 	for (int i = 0; i < size - 1; i++){
 		if (arr[i] == bigram.first && arr[i+1] == bigram.second){
@@ -78,12 +104,18 @@ int main(){
 	}
 	free(arr);
 
-	for (int i = 0; i < 100; i++){
-		Bigram bigram = get_bigram(int16_arr, arr_size);
+	for (int i = 0; i < 256; i++){
+		BigramEntry bigram = get_bigram(int16_arr, arr_size);
 		int count = replace_bigram(int16_arr, bigram, arr_size, 256+i);
 		remove_empty(int16_arr, arr_size, (arr_size - count));
 		arr_size = (arr_size - count);
-		printf("%d | %d\n", arr_size, i);
+		int used_count = 0;
+		for (int i = 0; i < TABLE_SIZE; i++){
+			if (table[i].used == 1){
+				used_count += 1;
+			}
+		}
+		printf("%f%% | %d | %d\n", ((float)used_count / TABLE_SIZE) * 100, i, arr_size);
 	}
 	
 	file = fopen(out, "wb");
