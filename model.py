@@ -115,7 +115,7 @@ class GPT(nn.Module):
 		self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 		self.lm_head.weight.data.zero_()
 
-	def forward(self, idx: Tensor, targets: Tensor) -> Tensor:
+	def forward(self, idx: Tensor) -> Tensor:
 		x = self.transformer.wte(idx)
 
 		for layer in self.transformer.h:

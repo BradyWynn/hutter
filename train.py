@@ -13,14 +13,14 @@ def load_tokens():
 	return tokens
 
 class DataLoaderLite:
-	def __init__(self, B, T, K):
-		self.B, self.T, self.K = B, T, K
+	def __init__(self, B, T):
+		self.B, self.T = B, T
 		self.tokens = load_tokens()
 
 	def next_batch(self):
 		ix = torch.randint(len(self.tokens) - self.T, (self.B,))
 		x = torch.stack([self.tokens[i:i+self.T] for i in ix])
-		y = torch.stack([torch.stack([self.tokens[i+j+1:i+j+1+self.T] for j in range(self.K)]) for i in ix], dim=1)
+		y = torch.stack([self.tokens[i+1:i+1+self.T]for i in ix])
 		return x, y
 
 # attempt to autodetect device
@@ -40,7 +40,7 @@ grad_accum_steps = total_batch_size // (B * T)
 print(f"total desired batch size: {total_batch_size}")
 print(f"=> calculated gradient accumulation steps: {grad_accum_steps}")
 
-train_loader = DataLoaderLite(B=B, T=T, K=4)
+train_loader = DataLoaderLite(B=B, T=T)
 
 torch.set_float32_matmul_precision('high')
 
