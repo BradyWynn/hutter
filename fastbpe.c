@@ -2,10 +2,10 @@
 #include <stdlib.h>
 #include <math.h>
 
-#define TABLE_SIZE 200000
+#define TABLE_SIZE 2000000
 
-FILE *data;
-FILE *file;
+FILE* data;
+FILE* file;
 
 typedef struct {
     int first;
@@ -104,8 +104,13 @@ int main(){
 	}
 	free(arr);
 
-	for (int i = 0; i < 256; i++){
+	int first[2048] = {0};
+	int second[2048] = {0};
+
+	for (int i = 0; i < 2048; i++){
 		BigramEntry bigram = get_bigram(int16_arr, arr_size);
+		first[i] = bigram.first;
+		second[i] = bigram.second;
 		int count = replace_bigram(int16_arr, bigram, arr_size, 256+i);
 		remove_empty(int16_arr, arr_size, (arr_size - count));
 		arr_size = (arr_size - count);
@@ -121,6 +126,13 @@ int main(){
 	file = fopen(out, "wb");
 	fwrite(int16_arr, sizeof(short), arr_size, file);
 	fclose(file);
+
+	FILE* first_file = fopen("first", "wb");
+	FILE* second_file = fopen("second", "wb");
+	fwrite(first, sizeof(int), 2048, first_file);
+	fwrite(second, sizeof(int), 2048, second_file);
+	fclose(first_file);
+	fclose(second_file);
 
 	return 0;
 }
