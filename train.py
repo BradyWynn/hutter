@@ -115,7 +115,7 @@ for step in range(max_steps):
 		x, y = x.to(device), y.to(device)
 		# added after video, this field is also used by the forward pass.
 		with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-			logits = model(x, y)
+			logits = model(x)
 		loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1), ignore_index=-1)
 		loss = loss / grad_accum_steps
 		loss_accum += loss.detach()

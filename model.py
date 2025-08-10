@@ -82,6 +82,8 @@ class Attention(nn.Module):
 		k = k.view(bsz, seqlen, self.config.n_head, self.config.head_n_embd)
 		v = v.view(bsz, seqlen, self.config.n_head, self.config.head_n_embd)
 
+		q, k = norm(q), norm(k)
+
 		cos, sin = self.rotary(q)
 		q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
 
