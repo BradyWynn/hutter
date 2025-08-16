@@ -22,6 +22,26 @@ class GPTConfig:
 def norm(x):
 	return F.rms_norm(x, (x.size(-1),))
 
+def find_multiple(n: int, k: int) -> int:
+	if n % k == 0:
+		return n
+	return n + k - (n % k)
+
+class KVCache(nn.Module):
+	def __init__(self, max_batch_size, max_seq_length, n_heads, head_n_embd, dtype=torch.float32):
+		super().__init__()
+		cache_shape = (max_batch_size, n_heads, max_seq_length, head_n_embd)
+		self.register_buffer('k_cache', torch.zeros(cache_shape, dtype=dtype))
+		self.register_buffer('v_cache', torch.zeros(cache_shape, dtype=dtype))
+
+	def update(self, input_pos, k_val, v_val):
+		assert input_pos.shape[0] == k_val.shape[2]
+		k_out = self.k_cache
+		v_out = self.v_cache
+		k_out[:, :, input_pos] = k_val
+		v_out[:, :, input_pos] = v_val
+		return k_out, v_out
+
 class Rotary(torch.nn.Module):
 	def __init__(self, dim, base=10000):
 		super().__init__()
@@ -57,8 +77,8 @@ class TransformerBlock(nn.Module):
 		self.mlp = FeedForward(config)
 		self.attn_scale = (1 / (2 * config.n_layer)**0.5)
 
-	def forward(self, x: Tensor) -> Tensor:
-		x = x + self.attn_scale * self.attn(norm(x))
+	def forward(self, x: Tensor, input_pos: Tensor, mask: Tensor) -> Tensor:
+		x = x + self.attn_scale * self.attn(norm(x), input_pos, mask)
 		x = x + self.mlp(norm(x))
 		return x
 
@@ -72,8 +92,9 @@ class Attention(nn.Module):
 		self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
 		self.rotary = Rotary(config.head_n_embd)
 		self.c_proj.weight.data.zero_()
+		self.kv_cache = None
 
-	def forward(self, x: Tensor) -> Tensor:
+	def forward(self, x: Tensor, input_pos: Tensor, mask: Tensor) -> Tensor:
 		bsz, seqlen, _ = x.shape
 
 		q, k, v = self.c_attn(x).split([self.config.n_embd, self.config.n_embd, self.config.n_embd], dim=-1)
@@ -89,7 +110,10 @@ class Attention(nn.Module):
 
 		q, k, v = map(lambda x: x.transpose(1, 2), (q, k, v))
 
-		y = F.scaled_dot_product_attention(q, k, v, is_causal=True, dropout_p=0.0)
+		if self.kv_cache is not None:
+			k, v = self.kv_cache.update(input_pos, k, v)
+
+		y = F.scaled_dot_product_attention(q, k, v, attn_mask=mask)
 		y = y.transpose(1, 2).contiguous().view(bsz, seqlen, self.config.n_embd)
 		return self.c_proj(y)
 
@@ -117,11 +141,22 @@ class GPT(nn.Module):
 		self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 		self.lm_head.weight.data.zero_()
 
-	def forward(self, idx: Tensor) -> Tensor:
+	def setup_caches(self, max_batch_size, max_seq_length):
+		max_seq_length = find_multiple(max_seq_length, 8)
+		self.max_seq_length = max_seq_length
+		self.max_batch_size = max_batch_size
+		for b in self.transformer.h:
+			b.attn.kv_cache = KVCache(max_batch_size, max_seq_length, self.config.n_head, self.config.head_n_embd)
+
+		self.causal_mask = torch.tril(torch.ones(self.max_seq_length, self.max_seq_length, dtype=torch.bool)).view(1, 1, self.max_seq_length, self.max_seq_length)
+
+	def forward(self, idx: Tensor, input_pos: Tensor) -> Tensor:
 		x = self.transformer.wte(idx)
 
+		mask = self.causal_mask[:, :, input_pos]
+
 		for layer in self.transformer.h:
-			x = layer(x)
+			x = layer(x, input_pos, mask)
 
 		x = norm(x)
 		logits = self.lm_head(x)
