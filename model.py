@@ -28,7 +28,7 @@ def find_multiple(n: int, k: int) -> int:
 	return n + k - (n % k)
 
 class KVCache(nn.Module):
-	def __init__(self, max_batch_size, max_seq_length, n_heads, head_n_embd, dtype=torch.float32):
+	def __init__(self, max_batch_size, max_seq_length, n_heads, head_n_embd, dtype=torch.bfloat16):
 		super().__init__()
 		cache_shape = (max_batch_size, n_heads, max_seq_length, head_n_embd)
 		self.register_buffer('k_cache', torch.zeros(cache_shape, dtype=dtype))
