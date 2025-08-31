@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <math.h>
 
 int all_close(float* a, float* b, int n){
 	for (int i = 0; i < n; i++){
@@ -55,20 +56,20 @@ float* mat_scalar_mul(float* mat, float scalar, int m, int n){
 }
 
 int main(){	
-	int t = 1024;
+	int t = 32;
 	int n_embd = 512;
-	int n_heads = 8;
 	int head_embd = 64;
+	int n_heads = n_embd / head_embd;
 
 	float* c_attn = (float*)malloc(sizeof(float)*n_embd*n_embd*3);
 	for (int i = 0; i < n_embd*n_embd*3; i++){
-		c_attn[i] = i % 256;
+		c_attn[i] = ((i % 64) - 32)* 0.0015625;
 	}
 	// float* c_proj = (float*)malloc(sizeof(float)*n_embd*n_embd);
 
 	float* x = (float*)malloc(sizeof(float)*t*n_embd);
-		for (int i = 0; i < t*n_embd; i++){
-		x[i] = i % 256;
+	for (int i = 0; i < t*n_embd; i++){
+		x[i] = ((i % 64) - 32) * 0.0015625;
 	}
 	
 	float* qkv = matmul(x, c_attn, t, n_embd, 3*n_embd);
@@ -102,6 +103,7 @@ int main(){
 		}
 	}
 	free(q); free(k); free(v);
+
 	float* result = (float*)malloc(sizeof(float)*n_heads*t*t);
 	for (int k = 0; k < n_heads; k++){
 		float* left = &q_T[k*(t*head_embd)];
@@ -114,7 +116,45 @@ int main(){
 			}
 		}
 	}
-	printf("%f", result[8432]);
+	result = mat_scalar_mul(result, 1/sqrt(head_embd), t, t);
+	// softmax
+	for (int h = 0; h < n_heads; h++){
+		for (int i = 0; i < t; i++){
+			float max_val = -10000;
+			float exp_sum = 0;
+			for (int j = 0; j < i+1; j++){
+				if (result[h*t*t + i*t + j] > max_val){
+					max_val = result[h*t*t + i*t + j];
+				}
+			}
+			for (int j = 0; j < i+1; j++){
+				result[h*t*t + i*t + j] = exp(result[h*t*t + i*t + j] - max_val);
+				exp_sum += result[h*t*t + i*t + j];
+			}
+			for (int j = 0; j < i+1; j++){
+				result[h*t*t + i*t + j] = result[h*t*t + i*t + j] / exp_sum;
+			}
+		}
+	}
+	// printf("%f", result[873]);
+	float* attn_out = (float*)malloc(sizeof(float)*n_heads*t*head_embd);
+	for(int i = 0; i < n_heads*t*head_embd; i++){
+		attn_out[i] = 0.0;
+	}
+	for (int h = 0; h < n_heads; h++){
+		for (int i = 0; i < t; i++){
+			for (int k = 0; k < t; k++){
+				for (int j = 0; j < head_embd; j++){
+					attn_out[h*t*head_embd + i*head_embd+j] += result[h*t*t + i*t+k] * v_T[h*t*head_embd + k*head_embd+j];
+				}
+			}
+		}
+	}
+	float sum = 0;
+	for (int i = 0; i < n_heads*t*head_embd; i++){
+		sum += attn_out[i];
+	}
+	printf("%f", sum);
 
 	return 0;
 }
