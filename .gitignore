@@ -7,3 +7,4 @@ tokenized_enwik9.npy
 *.zip
 *.pt
 *.exe
+*.json

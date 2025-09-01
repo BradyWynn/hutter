@@ -35,6 +35,26 @@ v = torch.from_numpy(v).permute(1, 0, 2)
 
 result = q @ k.permute(0, 2, 1)
 result = result / 8.0
+# print(torch.sum(result).item())
+
+for h in range(result.size(0)):
+    for j in range(result.size(1)):
+        max_val = -10000
+        exp_sum = 0
+        for i in range(j+1):
+            if result[h][j][i] > max_val:
+                max_val = result[h][j][i]
+        for i in range(j+1):
+            result[h][j][i] = torch.exp(result[h][j][i] - max_val)
+            exp_sum += result[h][j][i]
+        for i in range(j+1):
+            result[h][j][i] = result[h][j][i] / exp_sum
+        for i in range(t):
+            if i > j:
+                result[h][j][i] = 0
+# print(result.flatten()[873].item())
+manual_out = result @ v
+print(torch.sum(manual_out))
 
 out = F.scaled_dot_product_attention(q, k, v, is_causal=True)
 print(torch.sum(out))

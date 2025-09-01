@@ -37,20 +37,16 @@ float* matmul(float* a, float* b, int m, int n, int p){
 	return c;
 }
 
-float* mat_scalar_add(float* mat, float scalar, int m, int n){
-	for(int i = 0; i < m; i++){
-		for (int j = 0; j < n; j++){
-			mat[i*n+j] += scalar;
-		}
+float* mat_scalar_add(float* mat, float scalar, int n){
+	for (int i = 0; i < n; i++){
+		mat[i] += scalar;
 	}
 	return mat;
 }
 
-float* mat_scalar_mul(float* mat, float scalar, int m, int n){
-	for(int i = 0; i < m; i++){
-		for (int j = 0; j < n; j++){
-			mat[i*n+j] *= scalar;
-		}
+float* mat_scalar_mul(float* mat, float scalar, int n){
+	for (int i = 0; i < n; i++){
+		mat[i] *= scalar;
 	}
 	return mat;
 }
@@ -116,7 +112,7 @@ int main(){
 			}
 		}
 	}
-	result = mat_scalar_mul(result, 1/sqrt(head_embd), t, t);
+	result = mat_scalar_mul(result, 1 / 8.0, n_heads*t*t);
 	// softmax
 	for (int h = 0; h < n_heads; h++){
 		for (int i = 0; i < t; i++){
@@ -128,11 +124,16 @@ int main(){
 				}
 			}
 			for (int j = 0; j < i+1; j++){
-				result[h*t*t + i*t + j] = exp(result[h*t*t + i*t + j] - max_val);
+				result[h*t*t + i*t + j] = expf(result[h*t*t + i*t + j] - max_val);
 				exp_sum += result[h*t*t + i*t + j];
 			}
 			for (int j = 0; j < i+1; j++){
 				result[h*t*t + i*t + j] = result[h*t*t + i*t + j] / exp_sum;
+			}
+			for (int j = 0; j < t; j++){
+				if (j > i){
+					result[h*t*t + i*t + j] = 0.0;
+				}
 			}
 		}
 	}
@@ -155,6 +156,7 @@ int main(){
 		sum += attn_out[i];
 	}
 	printf("%f", sum);
+	// printf("%f", attn_out[5821]);
 
 	return 0;
 }
