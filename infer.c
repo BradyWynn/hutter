@@ -51,8 +51,67 @@ float* mat_scalar_mul(float* mat, float scalar, int n){
 	return mat;
 }
 
+float* scaled_dot_product_attention(float* q, float* k, float* v, int t, int n_embd, int head_embd){
+	int n_heads = n_embd / head_embd;
+
+	// q @ k_T
+	float* result = (float*)malloc(sizeof(float)*n_heads*t*t);
+	for (int h = 0; h < n_heads; h++){
+		float* left = &q[h*(t*head_embd)];
+		float* right = &k[h*(t*head_embd)];
+		float* right_T = transpose(right, t, head_embd);
+		float* temp = matmul(left, right_T, t, head_embd, t);
+		for (int i = 0; i < t; i++){
+			for (int j = 0; j < t; j++){
+				result[h * (t*t) + i*t + j] = temp[i*t+j];
+			}
+		}
+	}
+	// divide d_k
+	result = mat_scalar_mul(result, 1 / 8.0, n_heads*t*t);
+	// softmax
+	for (int h = 0; h < n_heads; h++){
+		for (int i = 0; i < t; i++){
+			float max_val = -10000;
+			float exp_sum = 0;
+			for (int j = 0; j < i+1; j++){
+				if (result[h*t*t + i*t + j] > max_val){
+					max_val = result[h*t*t + i*t + j];
+				}
+			}
+			for (int j = 0; j < i+1; j++){
+				result[h*t*t + i*t + j] = expf(result[h*t*t + i*t + j] - max_val);
+				exp_sum += result[h*t*t + i*t + j];
+			}
+			for (int j = 0; j < i+1; j++){
+				result[h*t*t + i*t + j] = result[h*t*t + i*t + j] / exp_sum;
+			}
+			for (int j = 0; j < t; j++){
+				if (j > i){
+					result[h*t*t + i*t + j] = 0.0;
+				}
+			}
+		}
+	}
+	float* attn_out = (float*)malloc(sizeof(float)*n_heads*t*head_embd);
+	for(int i = 0; i < n_heads*t*head_embd; i++){
+		attn_out[i] = 0.0;
+	}
+	// v
+	for (int h = 0; h < n_heads; h++){
+		for (int i = 0; i < t; i++){
+			for (int k = 0; k < t; k++){
+				for (int j = 0; j < head_embd; j++){
+					attn_out[h*t*head_embd + i*head_embd+j] += result[h*t*t + i*t+k] * v[h*t*head_embd + k*head_embd+j];
+				}
+			}
+		}
+	}
+	return attn_out;
+}
+
 int main(){	
-	int t = 32;
+	int t = 1024;
 	int n_embd = 512;
 	int head_embd = 64;
 	int n_heads = n_embd / head_embd;
@@ -100,63 +159,13 @@ int main(){
 	}
 	free(q); free(k); free(v);
 
-	float* result = (float*)malloc(sizeof(float)*n_heads*t*t);
-	for (int k = 0; k < n_heads; k++){
-		float* left = &q_T[k*(t*head_embd)];
-		float* right = &k_T[k*(t*head_embd)];
-		float* right_T = transpose(right, t, head_embd);
-		float* temp = matmul(left, right_T, t, head_embd, t);
-		for (int i = 0; i < t; i++){
-			for (int j = 0; j < t; j++){
-				result[k * (t*t) + i*t + j] = temp[i*t+j];
-			}
-		}
-	}
-	result = mat_scalar_mul(result, 1 / 8.0, n_heads*t*t);
-	// softmax
-	for (int h = 0; h < n_heads; h++){
-		for (int i = 0; i < t; i++){
-			float max_val = -10000;
-			float exp_sum = 0;
-			for (int j = 0; j < i+1; j++){
-				if (result[h*t*t + i*t + j] > max_val){
-					max_val = result[h*t*t + i*t + j];
-				}
-			}
-			for (int j = 0; j < i+1; j++){
-				result[h*t*t + i*t + j] = expf(result[h*t*t + i*t + j] - max_val);
-				exp_sum += result[h*t*t + i*t + j];
-			}
-			for (int j = 0; j < i+1; j++){
-				result[h*t*t + i*t + j] = result[h*t*t + i*t + j] / exp_sum;
-			}
-			for (int j = 0; j < t; j++){
-				if (j > i){
-					result[h*t*t + i*t + j] = 0.0;
-				}
-			}
-		}
-	}
-	// printf("%f", result[873]);
-	float* attn_out = (float*)malloc(sizeof(float)*n_heads*t*head_embd);
-	for(int i = 0; i < n_heads*t*head_embd; i++){
-		attn_out[i] = 0.0;
-	}
-	for (int h = 0; h < n_heads; h++){
-		for (int i = 0; i < t; i++){
-			for (int k = 0; k < t; k++){
-				for (int j = 0; j < head_embd; j++){
-					attn_out[h*t*head_embd + i*head_embd+j] += result[h*t*t + i*t+k] * v_T[h*t*head_embd + k*head_embd+j];
-				}
-			}
-		}
-	}
+	float* attn_out = scaled_dot_product_attention(q_T, k_T, v_T, t, n_embd, head_embd);
+
 	float sum = 0;
 	for (int i = 0; i < n_heads*t*head_embd; i++){
 		sum += attn_out[i];
 	}
 	printf("%f", sum);
-	// printf("%f", attn_out[5821]);
 
 	return 0;
 }

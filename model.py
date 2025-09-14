@@ -113,7 +113,7 @@ class Attention(nn.Module):
 		if self.kv_cache is not None:
 			k, v = self.kv_cache.update(input_pos, k, v)
 
-		y = F.scaled_dot_product_attention(q, k, v, attn_mask=mask)
+		y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
 		y = y.transpose(1, 2).contiguous().view(bsz, seqlen, self.config.n_embd)
 		return self.c_proj(y)
 
@@ -150,10 +150,11 @@ class GPT(nn.Module):
 
 		self.causal_mask = torch.tril(torch.ones(self.max_seq_length, self.max_seq_length, dtype=torch.bool)).view(1, 1, self.max_seq_length, self.max_seq_length)
 
-	def forward(self, idx: Tensor, input_pos: Tensor) -> Tensor:
+	def forward(self, idx: Tensor, input_pos: Tensor=None) -> Tensor:
 		x = self.transformer.wte(idx)
 
-		mask = self.causal_mask[:, :, input_pos]
+		# mask = self.causal_mask[:, :, input_pos]
+		mask = None
 
 		for layer in self.transformer.h:
 			x = layer(x, input_pos, mask)
