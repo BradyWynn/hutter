@@ -3,6 +3,8 @@
 #include <time.h>
 #include <math.h>
 
+FILE *file;
+
 int all_close(float* a, float* b, int n){
 	for (int i = 0; i < n; i++){
 		if (a[i] != b[i]){
@@ -80,7 +82,7 @@ float* scaled_dot_product_attention(float* q, float* k, float* v, int t, int n_e
 				}
 			}
 			for (int j = 0; j < i+1; j++){
-				result[h*t*t + i*t + j] = expf(result[h*t*t + i*t + j] - max_val);
+				result[h*t*t + i*t + j] = exp(result[h*t*t + i*t + j] - max_val);
 				exp_sum += result[h*t*t + i*t + j];
 			}
 			for (int j = 0; j < i+1; j++){
@@ -110,21 +112,26 @@ float* scaled_dot_product_attention(float* q, float* k, float* v, int t, int n_e
 	return attn_out;
 }
 
-int main(){	
+int main(){
+	char dir[] = "model/transformer.h.0.attn.c_attn.weight.npy";
+	file = fopen(dir, "r");
+
+	char header[128];
+	size_t file_read = fread(header, sizeof(char), 128, file);
+
+	float c_attn_T[1536*512];
+	file_read = fread(c_attn_T, sizeof(float), 1536*512, file);
+
+	float* c_attn = transpose(c_attn_T, 1536, 512);
+
 	int t = 1024;
 	int n_embd = 512;
 	int head_embd = 64;
 	int n_heads = n_embd / head_embd;
 
-	float* c_attn = (float*)malloc(sizeof(float)*n_embd*n_embd*3);
-	for (int i = 0; i < n_embd*n_embd*3; i++){
-		c_attn[i] = ((i % 64) - 32)* 0.0015625;
-	}
-	// float* c_proj = (float*)malloc(sizeof(float)*n_embd*n_embd);
-
 	float* x = (float*)malloc(sizeof(float)*t*n_embd);
 	for (int i = 0; i < t*n_embd; i++){
-		x[i] = ((i % 64) - 32) * 0.0015625;
+		x[i] = 0.01;
 	}
 	
 	float* qkv = matmul(x, c_attn, t, n_embd, 3*n_embd);

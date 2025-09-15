@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -19,10 +20,8 @@ n_heads = n_embd // head_embd
 
 # c_attn = np.random.randn(n_embd, 3*n_embd) * 0.05
 # x = np.random.randn(t, n_embd) * 0.05
-c_attn = np.arange(n_embd*3*n_embd).reshape(n_embd, 3*n_embd)
-x = np.arange(t*n_embd).reshape(t, n_embd)
-c_attn = ((c_attn % 64) - 32) * 0.0015625
-x = ((x % 64) - 32) * 0.0015625
+c_attn = np.load(os.path.join('model','transformer.h.0.attn.c_attn.weight.npy')).T
+x = np.ones((t, n_embd)) * 0.01
 
 qkv = x @ c_attn
 q = qkv[:, n_embd*0:n_embd*1].reshape(t, n_heads, head_embd)
