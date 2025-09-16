@@ -149,30 +149,73 @@ int main(){
 	}
 	free(qkv);
 
-	float* q_T = (float*)malloc(sizeof(float)*t*n_embd);
-	float* k_T = (float*)malloc(sizeof(float)*t*n_embd);
-	float* v_T = (float*)malloc(sizeof(float)*t*n_embd);
-
-	for (int t_idx = 0; t_idx < t; t_idx++) {
-		for (int h = 0; h < n_heads; h++) {
-			for (int d = 0; d < head_embd; d++) {
-				int flat_idx = t_idx * (n_heads * head_embd) + h * head_embd + d;
-				int T_idx = h * (t * head_embd) + t_idx * head_embd + d;
-				q_T[T_idx] = q[flat_idx];
-				k_T[T_idx] = k[flat_idx];
-				v_T[T_idx] = v[flat_idx];
+	// norm
+	float* q_accumulate = (float*)malloc(sizeof(float)*t*n_heads);
+	for (int i = 0; i < head_embd; i++){
+		q_accumulate[i] = 0.0;
+	}
+	for (int i = 0; i < t; i++){
+		for (int j = 0; j < n_heads; j++){
+			for (int k = 0; k < head_embd; k++){
+				q_accumulate[i*n_heads+j] += pow(q[i*n_heads*head_embd+j*head_embd+k], 2.0);
 			}
 		}
 	}
-	free(q); free(k); free(v);
-
-	float* attn_out = scaled_dot_product_attention(q_T, k_T, v_T, t, n_embd, head_embd);
-
-	float sum = 0;
-	for (int i = 0; i < n_heads*t*head_embd; i++){
-		sum += attn_out[i];
+	float* k_accumulate = (float*)malloc(sizeof(float)*t*n_heads);
+		for (int i = 0; i < head_embd; i++){
+		k_accumulate[i] = 0.0;
 	}
-	printf("%f", sum);
+	for (int i = 0; i < t; i++){
+		for (int j = 0; j < n_heads; j++){
+			for (int r = 0; r < head_embd; r++){
+				k_accumulate[i*n_heads+j] += pow(k[i*n_heads*head_embd+j*head_embd+r], 2.0);
+			}
+		}
+	}
+	for (int i = 0; i < t*n_heads; i++){
+		q_accumulate[i] = sqrt(q_accumulate[i] / head_embd + 1e-8);
+		k_accumulate[i] = sqrt(k_accumulate[i] / head_embd + 1e-8);
+	}
+	for (int i = 0; i < t; i++){
+		for (int j = 0; j < n_heads; j++){
+			float q_denom = q_accumulate[i*n_heads+j];
+			float k_denom = k_accumulate[i*n_heads+j];
+			for (int r = 0; r < head_embd; r++){
+				q[i*n_heads*head_embd + j*head_embd + r] /= q_denom;
+				k[i*n_heads*head_embd + j*head_embd + r] /= k_denom;	
+			}
+		}
+	}
+	for (int i = 0; i < 10; i++){
+		printf("%f, ", q[i]);
+	}
+	// (t, n_embd) --> (t, n_heads, head_embd) --> (n_heads, t, head_embd)
+
+	// float* q_T = (float*)malloc(sizeof(float)*t*n_embd);
+	// float* k_T = (float*)malloc(sizeof(float)*t*n_embd);
+	// float* v_T = (float*)malloc(sizeof(float)*t*n_embd);
+
+	// // (n_heads, t, head_embd)
+	// for (int t_idx = 0; t_idx < t; t_idx++) {
+	// 	for (int h = 0; h < n_heads; h++) {
+	// 		for (int d = 0; d < head_embd; d++) {
+	// 			int flat_idx = t_idx * (n_heads * head_embd) + h * head_embd + d;
+	// 			int T_idx = h * (t * head_embd) + t_idx * head_embd + d;
+	// 			q_T[T_idx] = q[flat_idx];
+	// 			k_T[T_idx] = k[flat_idx];
+	// 			v_T[T_idx] = v[flat_idx];
+	// 		}
+	// 	}
+	// }
+	// free(q); free(k); free(v);
+
+	// float* attn_out = scaled_dot_product_attention(q_T, k_T, v_T, t, n_embd, head_embd);
+
+	// float sum = 0;
+	// for (int i = 0; i < n_heads*t*head_embd; i++){
+	// 	sum += attn_out[i];
+	// }
+	// printf("%f", sum);
 
 	return 0;
 }

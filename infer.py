@@ -5,21 +5,14 @@ from tqdm import tqdm
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 
-# a = torch.zeros(16, 16)
-# for i in range(16):
-#     for j in range(16):
-#         if i > j:
-#             a[i][j] = 1
-# plt.imshow(a)
-# plt.show()
+def norm(x):
+    return F.rms_norm(x, (x.size(-1),))
 
 t = 1024
 n_embd = 512
 head_embd = 64
 n_heads = n_embd // head_embd
 
-# c_attn = np.random.randn(n_embd, 3*n_embd) * 0.05
-# x = np.random.randn(t, n_embd) * 0.05
 c_attn = np.load(os.path.join('model','transformer.h.0.attn.c_attn.weight.npy')).T
 x = np.ones((t, n_embd)) * 0.01
 
@@ -28,9 +21,21 @@ q = qkv[:, n_embd*0:n_embd*1].reshape(t, n_heads, head_embd)
 k = qkv[:, n_embd*1:n_embd*2].reshape(t, n_heads, head_embd)
 v = qkv[:, n_embd*2:n_embd*3].reshape(t, n_heads, head_embd)
 
-q = torch.from_numpy(q).permute(1, 0, 2)
-k = torch.from_numpy(k).permute(1, 0, 2)
-v = torch.from_numpy(v).permute(1, 0, 2)
+q = torch.from_numpy(q)#.permute(1, 0, 2)
+k = torch.from_numpy(k)#.permute(1, 0, 2)
+v = torch.from_numpy(v)#.permute(1, 0, 2)
+
+# eps = 1e-8
+# rms = torch.zeros_like(q[..., 0])
+# for i in range(q.size(-1)):
+# 	rms += q[..., i]**2
+# rms = torch.sqrt(rms/q.size(-1) + eps).unsqueeze(-1)
+# print(rms.flatten().tolist()[:10])
+# q = q / rms
+
+q, k = norm(q), norm(k)
+
+print(q.flatten()[:10].tolist())
 
 # result = q @ k.permute(0, 2, 1)
 # result = result / 8.0
@@ -55,5 +60,5 @@ v = torch.from_numpy(v).permute(1, 0, 2)
 # manual_out = result @ v
 # print(torch.sum(manual_out).item())
 
-out = F.scaled_dot_product_attention(q, k, v, is_causal=True)
-print(torch.sum(out).item())
+# out = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+# print(torch.sum(out).item())
