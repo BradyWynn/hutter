@@ -8,8 +8,8 @@ import wandb
 from muon import SingleDeviceMuon
 
 def load_tokens():
-	tokens = np.load("tokenized_enwik9.npy")
-	tokens = torch.tensor(tokens, dtype=torch.long)
+	tokens = np.load("enwik9.npy")
+	tokens = torch.tensor(tokens, dtype=torch.uint8)
 	return tokens
 
 class DataLoaderLite:
@@ -21,7 +21,7 @@ class DataLoaderLite:
 		ix = torch.randint(len(self.tokens) - self.T, (self.B,))
 		x = torch.stack([self.tokens[i:i+self.T] for i in ix])
 		y = torch.stack([self.tokens[i+1:i+1+self.T]for i in ix])
-		return x, y
+		return x.long(), y.long()
 
 # attempt to autodetect device
 device = "cpu"
@@ -32,9 +32,9 @@ print(f"using device: {device}")
 # added after video, pytorch can be serious about it's device vs. device_type distinction
 device_type = "cuda" if device.startswith("cuda") else "cpu"
 
-total_batch_size = 2**18 # 2**19, ~0.5M, in number of tokens
-B = 8 # micro batch size
-T = 1024 # sequence length
+total_batch_size = 2**17 # 2**19, ~0.5M, in number of tokens
+B = 64 # micro batch size
+T = 2048 # sequence length
 assert total_batch_size % (B * T) == 0, "make sure total_batch_size is divisible by B * T"
 grad_accum_steps = total_batch_size // (B * T)
 print(f"total desired batch size: {total_batch_size}")
@@ -42,7 +42,7 @@ print(f"=> calculated gradient accumulation steps: {grad_accum_steps}")
 
 train_loader = DataLoaderLite(B=B, T=T)
 
-# torch.set_float32_matmul_precision('high')
+torch.set_float32_matmul_precision('high')
 
 wandb.init(
 	project="calebgpt",
@@ -63,7 +63,7 @@ raw_model = GPT()
 raw_model = raw_model.to(device).bfloat16()
 model = torch.compile(raw_model)
 
-max_steps = len(train_loader.tokens) // total_batch_size
+max_steps = 1000 * (len(train_loader.tokens) // total_batch_size)
 
 cooldown_frac = 0.4
 def get_lr(step: int):
@@ -76,12 +76,12 @@ def get_lr(step: int):
 		return w * 1.0 + (1 - w) * 0.1
 
 # init the optimizer(s)
-optimizer1 = torch.optim.Adam([raw_model.transformer.wte.weight], lr=0.3,   betas=(0.9, 0.95), fused=True)
-optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=0.002, betas=(0.9, 0.95), fused=True)
+# optimizer1 = torch.optim.Adam([raw_model.transformer.wte.weight], lr=0.3,   betas=(0.9, 0.95), fused=True)
+optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=0.01, betas=(0.9, 0.95), fused=True)
 params = list(raw_model.transformer.h.parameters())
 matrix_params = [p for p in params if p.ndim == 2]
 optimizer3 = SingleDeviceMuon(matrix_params, lr=0.02,  momentum=0.95)
-optimizers = [optimizer1, optimizer2, optimizer3]
+optimizers = [optimizer2, optimizer3]
 
 for opt in optimizers:
 	for group in opt.param_groups:
