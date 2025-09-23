@@ -32,9 +32,9 @@ print(f"using device: {device}")
 # added after video, pytorch can be serious about it's device vs. device_type distinction
 device_type = "cuda" if device.startswith("cuda") else "cpu"
 
-total_batch_size = 2**17 # 2**19, ~0.5M, in number of tokens
-B = 64 # micro batch size
-T = 2048 # sequence length
+total_batch_size = 2**19 # 2**19, ~0.5M, in number of tokens
+B = 128 # micro batch size
+T = 4096 # sequence length
 assert total_batch_size % (B * T) == 0, "make sure total_batch_size is divisible by B * T"
 grad_accum_steps = total_batch_size // (B * T)
 print(f"total desired batch size: {total_batch_size}")
@@ -63,7 +63,7 @@ raw_model = GPT()
 raw_model = raw_model.to(device).bfloat16()
 model = torch.compile(raw_model)
 
-max_steps = 1000 * (len(train_loader.tokens) // total_batch_size)
+max_steps = 10 * (len(train_loader.tokens) // total_batch_size)
 
 cooldown_frac = 0.4
 def get_lr(step: int):
@@ -77,10 +77,10 @@ def get_lr(step: int):
 
 # init the optimizer(s)
 # optimizer1 = torch.optim.Adam([raw_model.transformer.wte.weight], lr=0.3,   betas=(0.9, 0.95), fused=True)
-optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=0.01, betas=(0.9, 0.95), fused=True)
+optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=0.012787923321685442, betas=(0.9, 0.95), fused=True)
 params = list(raw_model.transformer.h.parameters())
 matrix_params = [p for p in params if p.ndim == 2]
-optimizer3 = SingleDeviceMuon(matrix_params, lr=0.02,  momentum=0.95)
+optimizer3 = SingleDeviceMuon(matrix_params, lr=0.031299057845524655,  momentum=0.95)
 optimizers = [optimizer2, optimizer3]
 
 for opt in optimizers:
@@ -120,7 +120,7 @@ for step in range(max_steps):
 		loss = loss / grad_accum_steps
 		loss_accum += loss.detach()
 		loss.backward()
-	# norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+	norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 	# determine and set the learning rate for this iteration
 	for opt in optimizers:
 		for group in opt.param_groups:
@@ -135,4 +135,4 @@ for step in range(max_steps):
 	tokens_processed = train_loader.B * train_loader.T * grad_accum_steps
 	tokens_per_sec = tokens_processed / dt
 	print(f"step {step:5d} | loss: {loss_accum.item():.6f} | lr {get_lr(step):.4e} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
-	wandb.log({"loss": loss_accum.item(), "lr": get_lr(step)})
+	wandb.log({"loss": loss_accum.item(), "lr": get_lr(step), "norm": norm})
