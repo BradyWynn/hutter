@@ -9,7 +9,7 @@ from muon import SingleDeviceMuon
 
 def load_tokens():
 	tokens = np.load("enwik9.npy")
-	tokens = torch.tensor(tokens, dtype=torch.uint8)
+	tokens = torch.tensor(tokens, dtype=torch.uint16)
 	return tokens
 
 class DataLoaderLite:
@@ -32,8 +32,8 @@ print(f"using device: {device}")
 # added after video, pytorch can be serious about it's device vs. device_type distinction
 device_type = "cuda" if device.startswith("cuda") else "cpu"
 
-total_batch_size = 2**19 # 2**19, ~0.5M, in number of tokens
-B = 128 # micro batch size
+total_batch_size = 2**20 # 2**19, ~0.5M, in number of tokens
+B = 32 # micro batch size
 T = 4096 # sequence length
 assert total_batch_size % (B * T) == 0, "make sure total_batch_size is divisible by B * T"
 grad_accum_steps = total_batch_size // (B * T)
@@ -63,7 +63,7 @@ raw_model = GPT()
 raw_model = raw_model.to(device).bfloat16()
 model = torch.compile(raw_model)
 
-max_steps = 10 * (len(train_loader.tokens) // total_batch_size)
+max_steps = 20 * (len(train_loader.tokens) // total_batch_size)
 
 cooldown_frac = 0.4
 def get_lr(step: int):
