@@ -1,12 +1,13 @@
 import numpy as np
 import tiktoken
 
-with open('enwik9', 'rb') as f:
+with open('enwik9', 'r', encoding='utf-8') as f:
     text = f.read()
 
 enc = tiktoken.get_encoding("gpt2")
 tokens = enc.encode(text)
-np.save("enwik9.npy", np.array(tokens))
+a = np.array(tokens)
+np.save("enwik9.npy", a)
 
 # print(set(text))
 # print(f"number of unique characters: {len(set(text))}")
@@ -14,6 +15,3 @@ np.save("enwik9.npy", np.array(tokens))
 
 # a = np.array(list(text.encode("utf-8")))
 # np.save("enwik9.npy", a)
-
-# a = np.frombuffer(text, dtype=np.uint8)
-# np.save('enwik9.npy', a)
