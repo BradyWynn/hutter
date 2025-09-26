@@ -32,9 +32,9 @@ print(f"using device: {device}")
 # added after video, pytorch can be serious about it's device vs. device_type distinction
 device_type = "cuda" if device.startswith("cuda") else "cpu"
 
-total_batch_size = 2**20 # 2**19, ~0.5M, in number of tokens
+total_batch_size = 2**15 # 2**19, ~0.5M, in number of tokens
 B = 32 # micro batch size
-T = 4096 # sequence length
+T = 1024 # sequence length
 assert total_batch_size % (B * T) == 0, "make sure total_batch_size is divisible by B * T"
 grad_accum_steps = total_batch_size // (B * T)
 print(f"total desired batch size: {total_batch_size}")
