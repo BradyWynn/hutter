@@ -9,3 +9,5 @@ tokenized_enwik9.npy
 *.pt
 *.exe
 *.json
+*.npy
+*.txt

@@ -1,13 +1,16 @@
 import numpy as np
-import tiktoken
+from bpeasy.tokenizer import BPEasyTokenizer
 
-with open('enwik9', 'r', encoding='utf-8') as f:
+with open('enwik9', 'r') as f:
     text = f.read()
 
-enc = tiktoken.get_encoding("gpt2")
-tokens = enc.encode(text)
-a = np.array(tokens)
-np.save("enwik9.npy", a)
+tokenizer = BPEasyTokenizer.from_file("tokenizer.json")
+np.save('tokens.npy', np.array(tokenizer.encode(text)))
+
+# enc = tiktoken.get_encoding("gpt2")
+# tokens = enc.encode(text)
+# a = np.array(tokens)
+# np.save("enwik9.npy", a)
 
 # print(set(text))
 # print(f"number of unique characters: {len(set(text))}")

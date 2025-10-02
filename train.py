@@ -8,7 +8,7 @@ import wandb
 from muon import SingleDeviceMuon
 
 def load_tokens():
-	tokens = np.load("enwik9.npy")
+	tokens = np.load("tokens.npy")
 	tokens = torch.tensor(tokens, dtype=torch.uint16)
 	return tokens
 
@@ -32,9 +32,9 @@ print(f"using device: {device}")
 # added after video, pytorch can be serious about it's device vs. device_type distinction
 device_type = "cuda" if device.startswith("cuda") else "cpu"
 
-total_batch_size = 2**15 # 2**19, ~0.5M, in number of tokens
-B = 32 # micro batch size
-T = 1024 # sequence length
+total_batch_size = 2**20 # 2**19, ~0.5M, in number of tokens
+B = 8 # micro batch size
+T = 2048 # sequence length
 assert total_batch_size % (B * T) == 0, "make sure total_batch_size is divisible by B * T"
 grad_accum_steps = total_batch_size // (B * T)
 print(f"total desired batch size: {total_batch_size}")
@@ -45,7 +45,7 @@ train_loader = DataLoaderLite(B=B, T=T)
 torch.set_float32_matmul_precision('high')
 
 wandb.init(
-	project="calebgpt",
+	project="hutter",
 
 	config={
 	"architecture": "transformer",
@@ -63,7 +63,7 @@ raw_model = GPT()
 raw_model = raw_model.to(device).bfloat16()
 model = torch.compile(raw_model)
 
-max_steps = 20 * (len(train_loader.tokens) // total_batch_size)
+max_steps = 1000 * (len(train_loader.tokens) // total_batch_size)
 
 cooldown_frac = 0.4
 def get_lr(step: int):
@@ -77,10 +77,10 @@ def get_lr(step: int):
 
 # init the optimizer(s)
 # optimizer1 = torch.optim.Adam([raw_model.transformer.wte.weight], lr=0.3,   betas=(0.9, 0.95), fused=True)
-optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=0.012787923321685442, betas=(0.9, 0.95), fused=True)
+optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=0.001, betas=(0.9, 0.999), fused=True)
 params = list(raw_model.transformer.h.parameters())
 matrix_params = [p for p in params if p.ndim == 2]
-optimizer3 = SingleDeviceMuon(matrix_params, lr=0.031299057845524655,  momentum=0.95)
+optimizer3 = SingleDeviceMuon(matrix_params, lr=0.02,  momentum=0.95)
 optimizers = [optimizer2, optimizer3]
 
 for opt in optimizers:

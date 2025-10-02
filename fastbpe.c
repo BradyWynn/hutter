@@ -104,10 +104,10 @@ int main(){
 	}
 	free(arr);
 
-	int first[2048] = {0};
-	int second[2048] = {0};
+	int first[5000] = {0};
+	int second[5000] = {0};
 
-	for (int i = 0; i < 2048; i++){
+	for (int i = 0; i < 5000; i++){
 		BigramEntry bigram = get_bigram(int16_arr, arr_size);
 		first[i] = bigram.first;
 		second[i] = bigram.second;
@@ -129,8 +129,8 @@ int main(){
 
 	FILE* first_file = fopen("first", "wb");
 	FILE* second_file = fopen("second", "wb");
-	fwrite(first, sizeof(int), 2048, first_file);
-	fwrite(second, sizeof(int), 2048, second_file);
+	fwrite(first, sizeof(int), 5000, first_file);
+	fwrite(second, sizeof(int), 5000, second_file);
 	fclose(first_file);
 	fclose(second_file);
 
