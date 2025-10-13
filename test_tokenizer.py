@@ -7,7 +7,7 @@ regex_pattern = r"""'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+
 
 tokenizer = BPEasyTokenizer.train(
     iter([text]), # iterator over str
-    vocab_size=5256,
+    vocab_size=50256,
     max_token_length=1024,
     regex_pattern=regex_pattern,
     special_tokens=[],

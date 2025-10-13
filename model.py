@@ -9,10 +9,10 @@ from torch import Tensor
 
 @dataclass
 class GPTConfig:
-    context_length: int = 2048
+    context_length: int = 1024
     vocab_size: int = 50256
     n_layer: int = 4
-    n_head: int = 4
+    n_head: int = 8
     n_embd: int = 512
 
     @property
@@ -139,8 +139,8 @@ class GPT(nn.Module):
 
         self.transformer = nn.ModuleDict(transformer)
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-        self.transformer.wte.weight = self.lm_head.weight
-        # self.lm_head.weight.data.zero_()
+        # self.transformer.wte.weight = self.lm_head.weight
+        self.lm_head.weight.data.zero_()
 
     def setup_caches(self, max_batch_size, max_seq_length):
         max_seq_length = find_multiple(max_seq_length, 8)

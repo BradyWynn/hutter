@@ -11,3 +11,4 @@ tokenized_enwik9.npy
 *.json
 *.npy
 *.txt
+*.csv

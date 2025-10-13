@@ -7,6 +7,8 @@ from model import GPT, GPTConfig
 import wandb
 from muon import SingleDeviceMuon
 
+torch.manual_seed(0)
+
 def load_tokens():
 	tokens = np.load("tokens.npy")
 	tokens = torch.tensor(tokens, dtype=torch.uint16)
@@ -33,8 +35,8 @@ print(f"using device: {device}")
 device_type = "cuda" if device.startswith("cuda") else "cpu"
 
 total_batch_size = 2**20 # 2**19, ~0.5M, in number of tokens
-B = 8 # micro batch size
-T = 2048 # sequence length
+B = 16 # micro batch size
+T = 1024 # sequence length
 assert total_batch_size % (B * T) == 0, "make sure total_batch_size is divisible by B * T"
 grad_accum_steps = total_batch_size // (B * T)
 print(f"total desired batch size: {total_batch_size}")
@@ -76,12 +78,12 @@ def get_lr(step: int):
 		return w * 1.0 + (1 - w) * 0.1
 
 # init the optimizer(s)
-# optimizer1 = torch.optim.Adam([raw_model.transformer.wte.weight], lr=0.3,   betas=(0.9, 0.95), fused=True)
-optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=0.001, betas=(0.9, 0.999), fused=True)
+optimizer1 = torch.optim.Adam([raw_model.transformer.wte.weight], lr=0.3,   betas=(0.9, 0.95), fused=True)
+optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=0.002, betas=(0.9, 0.95), fused=True)
 params = list(raw_model.transformer.h.parameters())
 matrix_params = [p for p in params if p.ndim == 2]
 optimizer3 = SingleDeviceMuon(matrix_params, lr=0.02,  momentum=0.95)
-optimizers = [optimizer2, optimizer3]
+optimizers = [optimizer1, optimizer2, optimizer3]
 
 for opt in optimizers:
 	for group in opt.param_groups:
