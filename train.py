@@ -7,10 +7,10 @@ from model import GPT, GPTConfig
 import wandb
 from muon import SingleDeviceMuon
 
-torch.manual_seed(0)
-
 def load_tokens():
-	tokens = np.load("tokens.npy")
+	with open('tokenized_enwik9', 'rb') as f:
+		data = f.read()
+	tokens = np.frombuffer(data, dtype=np.uint16)
 	tokens = torch.tensor(tokens, dtype=torch.uint16)
 	return tokens
 
@@ -35,7 +35,7 @@ print(f"using device: {device}")
 device_type = "cuda" if device.startswith("cuda") else "cpu"
 
 total_batch_size = 2**20 # 2**19, ~0.5M, in number of tokens
-B = 16 # micro batch size
+B = 64 # micro batch size
 T = 1024 # sequence length
 assert total_batch_size % (B * T) == 0, "make sure total_batch_size is divisible by B * T"
 grad_accum_steps = total_batch_size // (B * T)
@@ -61,6 +61,10 @@ wandb.init(
 	}
 )
 
+# def train():
+torch.manual_seed(0)
+# wandb.init(project='hutter')
+# config = wandb.config
 raw_model = GPT()
 raw_model = raw_model.to(device).bfloat16()
 model = torch.compile(raw_model)
@@ -78,11 +82,11 @@ def get_lr(step: int):
 		return w * 1.0 + (1 - w) * 0.1
 
 # init the optimizer(s)
-optimizer1 = torch.optim.Adam([raw_model.transformer.wte.weight], lr=0.3,   betas=(0.9, 0.95), fused=True)
-optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=0.002, betas=(0.9, 0.95), fused=True)
+optimizer1 = torch.optim.Adam([raw_model.transformer.wte.weight], lr=0.2020765099402752,   betas=(0.9, 0.95), fused=True)
+optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=0.03924171678624116, betas=(0.9, 0.95), fused=True)
 params = list(raw_model.transformer.h.parameters())
 matrix_params = [p for p in params if p.ndim == 2]
-optimizer3 = SingleDeviceMuon(matrix_params, lr=0.02,  momentum=0.95)
+optimizer3 = SingleDeviceMuon(matrix_params, lr=0.04360942307137841,  momentum=0.95)
 optimizers = [optimizer1, optimizer2, optimizer3]
 
 for opt in optimizers:
@@ -138,3 +142,19 @@ for step in range(max_steps):
 	tokens_per_sec = tokens_processed / dt
 	print(f"step {step:5d} | loss: {loss_accum.item():.6f} | lr {get_lr(step):.4e} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
 	wandb.log({"loss": loss_accum.item(), "lr": get_lr(step), "norm": norm})
+
+# sweep_config = {
+#     'method': 'bayes',
+# 	'metric': {
+# 		'name': 'loss',
+# 		'goal': 'minimize'
+# 	},
+# 	'parameters': {
+# 		'muon_lr': {'distribution': 'uniform', 'min': 0.01, 'max': 0.1},
+# 		'wte_lr': {'distribution': 'uniform', 'min': 0.01, 'max': 0.5},
+# 		'lm_head_lr': {'distribution': 'uniform', 'min': 0.001, 'max': 0.1},
+# 	}
+#     }
+
+# sweep_id = wandb.sweep(sweep_config, project="hutter")
+# wandb.agent(sweep_id, train)

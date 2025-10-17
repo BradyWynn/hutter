@@ -39,11 +39,11 @@ int main(){
     FILE* first_file = fopen("first", "r");
     FILE* second_file = fopen("second", "r");
 
-    int* first = (int*)malloc(2048 * sizeof(int));
-    int* second = (int*)malloc(2048 * sizeof(int));
+    int* first = (int*)malloc(1000 * sizeof(int));
+    int* second = (int*)malloc(1000 * sizeof(int));
 
-    fread(first, sizeof(int), 2048, first_file);
-    fread(second, sizeof(int), 2048, second_file);
+    fread(first, sizeof(int), 1000, first_file);
+    fread(second, sizeof(int), 1000, second_file);
 
     fclose(first_file);
     fclose(second_file);
@@ -58,11 +58,11 @@ int main(){
 	}
 	free(arr);
 
-    for (int i = 0; i < 2048; i++){
+    for (int i = 0; i < 1000; i++){
         Bigram bigram = {first[i], second[i]};
         int removed = replace_and_compact(int16_arr, arr_size, bigram, 256 + i);
         arr_size -= removed;
-        printf("%f%% | %d | %d\n", (float)i/2048 * 100, i, arr_size);
+        printf("%f%% | %d | %d\n", (float)i/1000 * 100, i, arr_size);
     }
     
 	file = fopen(out, "wb");
