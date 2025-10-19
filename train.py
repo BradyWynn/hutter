@@ -3,7 +3,7 @@ import time
 import torch
 from torch.nn import functional as F
 import numpy as np
-from model import GPT, GPTConfig
+from model import GPT, GPTConfig, Quantized_Linear
 import wandb
 from muon import SingleDeviceMuon
 
@@ -66,12 +66,14 @@ torch.manual_seed(0)
 # wandb.init(project='hutter')
 # config = wandb.config
 raw_model = GPT()
-raw_model = raw_model.to(device).bfloat16()
+raw_model = raw_model.to(device)
 model = torch.compile(raw_model)
+
+weight_count = 12*GPTConfig.n_layer*GPTConfig.n_embd**2 + GPTConfig.vocab_size*GPTConfig.n_embd
 
 max_steps = 1000 * (len(train_loader.tokens) // total_batch_size)
 
-cooldown_frac = 0.4
+cooldown_frac = 0.0
 def get_lr(step: int):
 	x = step / max_steps # progress in training
 	assert 0 <= x < 1
@@ -83,11 +85,15 @@ def get_lr(step: int):
 
 # init the optimizer(s)
 optimizer1 = torch.optim.Adam([raw_model.transformer.wte.weight], lr=0.2020765099402752,   betas=(0.9, 0.95), fused=True)
-optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=0.03924171678624116, betas=(0.9, 0.95), fused=True)
+optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=0.0392417167862, betas=(0.9, 0.95), fused=True)
 params = list(raw_model.transformer.h.parameters())
+e_params = [m.e for m in raw_model.modules() if isinstance(m, Quantized_Linear)]
+b_params = [m.b for m in raw_model.modules() if isinstance(m, Quantized_Linear)]
+compress_params = e_params + b_params
 matrix_params = [p for p in params if p.ndim == 2]
-optimizer3 = SingleDeviceMuon(matrix_params, lr=0.04360942307137841,  momentum=0.95)
-optimizers = [optimizer1, optimizer2, optimizer3]
+optimizer3 = SingleDeviceMuon(matrix_params, lr=0.04360942307137841, momentum=0.95)
+optimizer4 = torch.optim.Adam(compress_params, lr=0.5, betas=(0.9, 0.95), fused=True, eps=1e-3)
+optimizers = [optimizer1, optimizer2, optimizer3, optimizer4]
 
 for opt in optimizers:
 	for group in opt.param_groups:
@@ -116,6 +122,8 @@ for step in range(max_steps):
 	# do one step of the optimization
 	model.zero_grad(set_to_none=True)
 	loss_accum = 0.0
+	ce_loss_accum = 0.0
+	q_loss_accum = 0.0
 	for micro_step in range(grad_accum_steps):
 		x, y = train_loader.next_batch()
 		x, y = x.to(device), y.to(device)
@@ -123,7 +131,15 @@ for step in range(max_steps):
 		with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
 			logits = model(x)
 		loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1), ignore_index=-1)
+		ce_loss = loss.detach()
+		Q = torch.stack([m.qbits() for m in model.modules() if isinstance(m, Quantized_Linear)]).sum()
+		Q = Q / weight_count
+		loss = loss + 0.01*Q
 		loss = loss / grad_accum_steps
+		ce_loss = ce_loss / grad_accum_steps
+		Q = Q / grad_accum_steps
+		ce_loss_accum += ce_loss
+		q_loss_accum += Q.detach()
 		loss_accum += loss.detach()
 		loss.backward()
 	norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -140,8 +156,8 @@ for step in range(max_steps):
 	dt = t1 - t0 # time difference in seconds
 	tokens_processed = train_loader.B * train_loader.T * grad_accum_steps
 	tokens_per_sec = tokens_processed / dt
-	print(f"step {step:5d} | loss: {loss_accum.item():.6f} | lr {get_lr(step):.4e} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
-	wandb.log({"loss": loss_accum.item(), "lr": get_lr(step), "norm": norm})
+	print(f"step {step:5d} | loss: {loss_accum.item():.6f} | ce_loss: {ce_loss_accum.item():.6f}| Q: {q_loss_accum:.6f} | lr {get_lr(step):.4e} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
+	wandb.log({"loss": loss_accum.item(), "ce_loss": ce_loss_accum.item(), "lr": get_lr(step), "norm": norm, 'Q': q_loss_accum.item()})
 
 # sweep_config = {
 #     'method': 'bayes',
@@ -151,8 +167,10 @@ for step in range(max_steps):
 # 	},
 # 	'parameters': {
 # 		'muon_lr': {'distribution': 'uniform', 'min': 0.01, 'max': 0.1},
-# 		'wte_lr': {'distribution': 'uniform', 'min': 0.01, 'max': 0.5},
+# 		'wte_lr': {'distribution': 'uniform', 'min': 0.01, 'max': 0.8},
 # 		'lm_head_lr': {'distribution': 'uniform', 'min': 0.001, 'max': 0.1},
+# 		'b_lr': {'distribution': 'uniform', 'min': 0.001, 'max': 0.2},
+# 		'e_lr': {'distribution': 'uniform', 'min': 0.001, 'max': 0.1},
 # 	}
 #     }
 

@@ -1,6 +1,7 @@
 """
 adapted from https://github.com/pytorch-labs/gpt-fast
 """
+import math
 from dataclasses import dataclass
 import torch
 import torch.nn as nn
@@ -70,6 +71,47 @@ def apply_rotary_emb(x, cos, sin):
     y2 = x1 * (-sin) + x2 * cos
     return torch.cat([y1, y2], 3).type_as(x)
 
+class Quantized_Linear(nn.Module):
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        device=None,
+        dtype=None,
+    ) -> None:
+        factory_kwargs = {"device": device, "dtype": dtype}
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.weight = nn.Parameter(torch.empty((out_features, in_features), **factory_kwargs))
+        self.e = nn.Parameter(torch.ones((out_features, in_features), **factory_kwargs) * -8)
+        self.b = nn.Parameter(torch.ones((out_features, in_features), **factory_kwargs) * 16.)
+        self.reset_parameters()
+
+    def qbits(self):
+        return self.b.relu().sum()
+    
+    def qweight(self):
+        return torch.min(torch.max(2**-self.e * self.weight, -2**(self.b.relu()-1)), 2**(self.b.relu()-1) - 1)
+
+    def reset_parameters(self) -> None:
+        nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+
+    def forward(self, x: Tensor) -> Tensor:
+        qw = self.qweight()
+        w = (qw.round() - qw).detach() + qw  # straight through estimator
+        return F.linear(x, 2**self.e * w)
+
+class FeedForward(nn.Module):
+    def __init__(self, config: GPTConfig) -> None:
+        super().__init__()
+        self.c_fc = Quantized_Linear(config.n_embd, 4*config.n_embd)
+        self.c_proj = Quantized_Linear(4*config.n_embd, config.n_embd)
+        self.c_proj.weight.data.zero_()
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self.c_proj(F.gelu(self.c_fc(x), approximate='tanh'))
+
 class TransformerBlock(nn.Module):
     def __init__(self, config: GPTConfig) -> None:
         super().__init__()
@@ -88,8 +130,8 @@ class Attention(nn.Module):
         assert config.n_embd % config.n_head == 0
         self.config = config
         # key, query, value projections for all heads, but in a batch
-        self.c_attn = nn.Linear(config.n_embd, 3*config.n_embd, bias=False)
-        self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
+        self.c_attn = Quantized_Linear(config.n_embd, 3*config.n_embd)
+        self.c_proj = Quantized_Linear(config.n_embd, config.n_embd)
         self.rotary = Rotary(config.head_n_embd)
         self.c_proj.weight.data.zero_()
         self.kv_cache = None
@@ -117,16 +159,6 @@ class Attention(nn.Module):
         y = y.transpose(1, 2).contiguous().view(bsz, seqlen, self.config.n_embd)
         return self.c_proj(y)
 
-class FeedForward(nn.Module):
-    def __init__(self, config: GPTConfig) -> None:
-        super().__init__()
-        self.c_fc = nn.Linear(config.n_embd, 4*config.n_embd, bias=False)
-        self.c_proj = nn.Linear(4*config.n_embd, config.n_embd, bias=False)
-        self.c_proj.weight.data.zero_()
-
-    def forward(self, x: Tensor) -> Tensor:
-        return self.c_proj(F.gelu(self.c_fc(x), approximate='tanh'))
-
 class GPT(nn.Module):
     def __init__(self, config: GPTConfig=GPTConfig()) -> None:
         super().__init__()
@@ -138,7 +170,7 @@ class GPT(nn.Module):
         }
 
         self.transformer = nn.ModuleDict(transformer)
-        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        self.lm_head = Quantized_Linear(config.n_embd, config.vocab_size)
         # self.transformer.wte.weight = self.lm_head.weight
         self.lm_head.weight.data.zero_()
 
