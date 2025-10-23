@@ -35,7 +35,7 @@ print(f"using device: {device}")
 device_type = "cuda" if device.startswith("cuda") else "cpu"
 
 total_batch_size = 2**20 # 2**19, ~0.5M, in number of tokens
-B = 64 # micro batch size
+B = 128 # micro batch size
 T = 1024 # sequence length
 assert total_batch_size % (B * T) == 0, "make sure total_batch_size is divisible by B * T"
 grad_accum_steps = total_batch_size // (B * T)
@@ -57,14 +57,19 @@ wandb.init(
 	"n_head": GPTConfig.n_head,
 	"n_embd": GPTConfig.n_embd,
 	"total_batch_size": total_batch_size,
-	"B": B
+	"B": B,
+	"muon_lr": 0.06074254724433745,
+	"wte_lr": 0.613409019234207,
+	"lm_head_lr": 0.008885133218054717,
+	"b_lr": 0.18/50,
+	"e_lr": 0.1/50,
 	}
 )
 
 # def train():
 torch.manual_seed(0)
 # wandb.init(project='hutter')
-# config = wandb.config
+config = wandb.config
 raw_model = GPT()
 raw_model = raw_model.to(device)
 model = torch.compile(raw_model)
@@ -84,16 +89,16 @@ def get_lr(step: int):
 		return w * 1.0 + (1 - w) * 0.1
 
 # init the optimizer(s)
-optimizer1 = torch.optim.Adam([raw_model.transformer.wte.weight], lr=0.2020765099402752,   betas=(0.9, 0.95), fused=True)
-optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=0.0392417167862, betas=(0.9, 0.95), fused=True)
+optimizer1 = torch.optim.Adam([raw_model.transformer.wte.weight], lr=config.wte_lr,   betas=(0.9, 0.95), fused=True)
+optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=config.lm_head_lr, betas=(0.9, 0.95), fused=True)
 params = list(raw_model.transformer.h.parameters())
 e_params = [m.e for m in raw_model.modules() if isinstance(m, Quantized_Linear)]
 b_params = [m.b for m in raw_model.modules() if isinstance(m, Quantized_Linear)]
-compress_params = e_params + b_params
 matrix_params = [p for p in params if p.ndim == 2]
-optimizer3 = SingleDeviceMuon(matrix_params, lr=0.04360942307137841, momentum=0.95)
-optimizer4 = torch.optim.Adam(compress_params, lr=0.5, betas=(0.9, 0.95), fused=True, eps=1e-3)
-optimizers = [optimizer1, optimizer2, optimizer3, optimizer4]
+optimizer3 = SingleDeviceMuon(matrix_params, lr=config.muon_lr, momentum=0.95)
+optimizer4 = torch.optim.Adam(e_params, lr=config.e_lr, betas=(0.9, 0.95), fused=True)
+optimizer5 = torch.optim.Adam(b_params, lr=config.b_lr, betas=(0.9, 0.95), fused=True)
+optimizers = [optimizer1, optimizer2, optimizer3, optimizer4, optimizer5]
 
 for opt in optimizers:
 	for group in opt.param_groups:
@@ -134,7 +139,7 @@ for step in range(max_steps):
 		ce_loss = loss.detach()
 		Q = torch.stack([m.qbits() for m in model.modules() if isinstance(m, Quantized_Linear)]).sum()
 		Q = Q / weight_count
-		loss = loss + 0.01*Q
+		loss = loss + 0.1*Q
 		loss = loss / grad_accum_steps
 		ce_loss = ce_loss / grad_accum_steps
 		Q = Q / grad_accum_steps
@@ -150,6 +155,11 @@ for step in range(max_steps):
 
 	for opt in optimizers:
 		opt.step()
+	# prevent nan
+	with torch.no_grad():
+		for m in raw_model.modules():
+			if isinstance(m, Quantized_Linear):
+				m.e.clamp_(-16.0, 16.0)
 	if device_type == "cuda":
 		torch.cuda.synchronize() # wait for the GPU to finish work
 	t1 = time.time()
@@ -157,7 +167,12 @@ for step in range(max_steps):
 	tokens_processed = train_loader.B * train_loader.T * grad_accum_steps
 	tokens_per_sec = tokens_processed / dt
 	print(f"step {step:5d} | loss: {loss_accum.item():.6f} | ce_loss: {ce_loss_accum.item():.6f}| Q: {q_loss_accum:.6f} | lr {get_lr(step):.4e} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
-	wandb.log({"loss": loss_accum.item(), "ce_loss": ce_loss_accum.item(), "lr": get_lr(step), "norm": norm, 'Q': q_loss_accum.item()})
+	es = torch.cat([m.e.detach().float().view(-1) for m in raw_model.modules() if isinstance(m, Quantized_Linear)])
+	bs = torch.cat([m.b.detach().float().view(-1) for m in raw_model.modules() if isinstance(m, Quantized_Linear)])
+
+	wandb.log({"loss": loss_accum.item(), "ce_loss": ce_loss_accum.item(),
+			"lr": get_lr(step), "norm": norm, 'Q': q_loss_accum.item(), 'e_min': es.min().item(), 'e_max': es.max().item(), 'e_mean': es.mean().item(),
+			'b_min': bs.min().item(), 'b_max': bs.max().item(), 'b_mean': bs.mean().item()})
 
 # sweep_config = {
 #     'method': 'bayes',
