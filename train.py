@@ -3,7 +3,7 @@ import time
 import torch
 from torch.nn import functional as F
 import numpy as np
-from model import GPT, GPTConfig, Quantized_Linear
+from model import GPT, GPTConfig
 import wandb
 from muon import SingleDeviceMuon
 
@@ -22,7 +22,7 @@ class DataLoaderLite:
 	def next_batch(self):
 		ix = torch.randint(len(self.tokens) - self.T, (self.B,))
 		x = torch.stack([self.tokens[i:i+self.T] for i in ix])
-		y = torch.stack([self.tokens[i+1:i+1+self.T]for i in ix])
+		y = torch.stack([self.tokens[i+self.T]for i in ix])
 		return x.long(), y.long()
 
 # attempt to autodetect device
@@ -34,15 +34,14 @@ print(f"using device: {device}")
 # added after video, pytorch can be serious about it's device vs. device_type distinction
 device_type = "cuda" if device.startswith("cuda") else "cpu"
 
-total_batch_size = 2**20 # 2**19, ~0.5M, in number of tokens
-B = 128 # micro batch size
-T = 1024 # sequence length
-assert total_batch_size % (B * T) == 0, "make sure total_batch_size is divisible by B * T"
-grad_accum_steps = total_batch_size // (B * T)
+total_batch_size = 2**9 # 2**19, ~0.5M, in number of tokens
+B = 512 # micro batch size
+assert total_batch_size % B == 0, "make sure total_batch_size is divisible by B"
+grad_accum_steps = total_batch_size // B
 print(f"total desired batch size: {total_batch_size}")
 print(f"=> calculated gradient accumulation steps: {grad_accum_steps}")
 
-train_loader = DataLoaderLite(B=B, T=T)
+train_loader = DataLoaderLite(B=B, T=GPTConfig.context_length)
 
 torch.set_float32_matmul_precision('high')
 
@@ -58,25 +57,21 @@ wandb.init(
 	"n_embd": GPTConfig.n_embd,
 	"total_batch_size": total_batch_size,
 	"B": B,
-	"muon_lr": 0.06074254724433745,
-	"wte_lr": 0.613409019234207,
-	"lm_head_lr": 0.008885133218054717,
-	"b_lr": 0.18/50,
-	"e_lr": 0.1/50,
+	"muon_lr": 0.026983262555318147,
+	"wte_lr": 0.2051943773787494,
+	"lm_head_lr": 0.00360132351849384,
 	}
 )
 
 # def train():
 torch.manual_seed(0)
-# wandb.init(project='hutter')
+wandb.init(project='hutter')
 config = wandb.config
 raw_model = GPT()
 raw_model = raw_model.to(device)
 model = torch.compile(raw_model)
 
-weight_count = 12*GPTConfig.n_layer*GPTConfig.n_embd**2 + GPTConfig.vocab_size*GPTConfig.n_embd
-
-max_steps = 1000 * (len(train_loader.tokens) // total_batch_size)
+max_steps = 1 * (len(train_loader.tokens) // total_batch_size)
 
 cooldown_frac = 0.0
 def get_lr(step: int):
@@ -92,13 +87,9 @@ def get_lr(step: int):
 optimizer1 = torch.optim.Adam([raw_model.transformer.wte.weight], lr=config.wte_lr,   betas=(0.9, 0.95), fused=True)
 optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=config.lm_head_lr, betas=(0.9, 0.95), fused=True)
 params = list(raw_model.transformer.h.parameters())
-e_params = [m.e for m in raw_model.modules() if isinstance(m, Quantized_Linear)]
-b_params = [m.b for m in raw_model.modules() if isinstance(m, Quantized_Linear)]
 matrix_params = [p for p in params if p.ndim == 2]
 optimizer3 = SingleDeviceMuon(matrix_params, lr=config.muon_lr, momentum=0.95)
-optimizer4 = torch.optim.Adam(e_params, lr=config.e_lr, betas=(0.9, 0.95), fused=True)
-optimizer5 = torch.optim.Adam(b_params, lr=config.b_lr, betas=(0.9, 0.95), fused=True)
-optimizers = [optimizer1, optimizer2, optimizer3, optimizer4, optimizer5]
+optimizers = [optimizer1, optimizer2, optimizer3]
 
 for opt in optimizers:
 	for group in opt.param_groups:
@@ -127,8 +118,6 @@ for step in range(max_steps):
 	# do one step of the optimization
 	model.zero_grad(set_to_none=True)
 	loss_accum = 0.0
-	ce_loss_accum = 0.0
-	q_loss_accum = 0.0
 	for micro_step in range(grad_accum_steps):
 		x, y = train_loader.next_batch()
 		x, y = x.to(device), y.to(device)
@@ -136,15 +125,7 @@ for step in range(max_steps):
 		with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
 			logits = model(x)
 		loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1), ignore_index=-1)
-		ce_loss = loss.detach()
-		Q = torch.stack([m.qbits() for m in model.modules() if isinstance(m, Quantized_Linear)]).sum()
-		Q = Q / weight_count
-		loss = loss + 0.1*Q
 		loss = loss / grad_accum_steps
-		ce_loss = ce_loss / grad_accum_steps
-		Q = Q / grad_accum_steps
-		ce_loss_accum += ce_loss
-		q_loss_accum += Q.detach()
 		loss_accum += loss.detach()
 		loss.backward()
 	norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -155,24 +136,15 @@ for step in range(max_steps):
 
 	for opt in optimizers:
 		opt.step()
-	# prevent nan
-	with torch.no_grad():
-		for m in raw_model.modules():
-			if isinstance(m, Quantized_Linear):
-				m.e.clamp_(-16.0, 16.0)
 	if device_type == "cuda":
 		torch.cuda.synchronize() # wait for the GPU to finish work
 	t1 = time.time()
 	dt = t1 - t0 # time difference in seconds
-	tokens_processed = train_loader.B * train_loader.T * grad_accum_steps
-	tokens_per_sec = tokens_processed / dt
-	print(f"step {step:5d} | loss: {loss_accum.item():.6f} | ce_loss: {ce_loss_accum.item():.6f}| Q: {q_loss_accum:.6f} | lr {get_lr(step):.4e} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
-	es = torch.cat([m.e.detach().float().view(-1) for m in raw_model.modules() if isinstance(m, Quantized_Linear)])
-	bs = torch.cat([m.b.detach().float().view(-1) for m in raw_model.modules() if isinstance(m, Quantized_Linear)])
+	seq_processed = train_loader.B * grad_accum_steps
+	seq_per_sec = seq_processed / dt
+	print(f"step {step:5d} | loss: {loss_accum.item():.6f} | lr {get_lr(step):.4e} | dt: {dt*1000:.2f}ms | seq/sec: {seq_per_sec:.2f}")
 
-	wandb.log({"loss": loss_accum.item(), "ce_loss": ce_loss_accum.item(),
-			"lr": get_lr(step), "norm": norm, 'Q': q_loss_accum.item(), 'e_min': es.min().item(), 'e_max': es.max().item(), 'e_mean': es.mean().item(),
-			'b_min': bs.min().item(), 'b_max': bs.max().item(), 'b_mean': bs.mean().item()})
+	wandb.log({"loss": loss_accum.item(), "lr": get_lr(step), "norm": norm})
 
 # sweep_config = {
 #     'method': 'bayes',
@@ -184,8 +156,6 @@ for step in range(max_steps):
 # 		'muon_lr': {'distribution': 'uniform', 'min': 0.01, 'max': 0.1},
 # 		'wte_lr': {'distribution': 'uniform', 'min': 0.01, 'max': 0.8},
 # 		'lm_head_lr': {'distribution': 'uniform', 'min': 0.001, 'max': 0.1},
-# 		'b_lr': {'distribution': 'uniform', 'min': 0.001, 'max': 0.2},
-# 		'e_lr': {'distribution': 'uniform', 'min': 0.001, 'max': 0.1},
 # 	}
 #     }
 
