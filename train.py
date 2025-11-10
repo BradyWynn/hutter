@@ -22,7 +22,7 @@ class DataLoaderLite:
 	def next_batch(self):
 		ix = torch.randint(len(self.tokens) - self.T, (self.B,))
 		x = torch.stack([self.tokens[i:i+self.T] for i in ix])
-		y = torch.stack([self.tokens[i+self.T]for i in ix])
+		y = torch.stack([self.tokens[i+1:i+self.T+1] for i in ix])
 		return x.long(), y.long()
 
 # attempt to autodetect device
@@ -34,8 +34,8 @@ print(f"using device: {device}")
 # added after video, pytorch can be serious about it's device vs. device_type distinction
 device_type = "cuda" if device.startswith("cuda") else "cpu"
 
-total_batch_size = 2**9 # 2**19, ~0.5M, in number of tokens
-B = 512 # micro batch size
+total_batch_size = 2**10 # 2**19, ~0.5M, in number of tokens
+B = 128 # micro batch size
 assert total_batch_size % B == 0, "make sure total_batch_size is divisible by B"
 grad_accum_steps = total_batch_size // B
 print(f"total desired batch size: {total_batch_size}")
@@ -57,23 +57,24 @@ wandb.init(
 	"n_embd": GPTConfig.n_embd,
 	"total_batch_size": total_batch_size,
 	"B": B,
-	"muon_lr": 0.026983262555318147,
-	"wte_lr": 0.2051943773787494,
-	"lm_head_lr": 0.00360132351849384,
+	"muon_lr": 0.012592276652172395,
+	"wte_lr": 0.011719614956921554,
+	"lm_head_lr": 0.00457115202466,
 	}
 )
 
 # def train():
 torch.manual_seed(0)
-wandb.init(project='hutter')
+# wandb.init(project='hutter')
 config = wandb.config
 raw_model = GPT()
+raw_model.load_state_dict(torch.load('log/stilted-donkey-1901.pt', weights_only=False)['model'])
 raw_model = raw_model.to(device)
 model = torch.compile(raw_model)
 
-max_steps = 1 * (len(train_loader.tokens) // total_batch_size)
+max_steps = 10000#(len(train_loader.tokens) // total_batch_size)
 
-cooldown_frac = 0.0
+cooldown_frac = 1.0
 def get_lr(step: int):
 	x = step / max_steps # progress in training
 	assert 0 <= x < 1
@@ -84,7 +85,7 @@ def get_lr(step: int):
 		return w * 1.0 + (1 - w) * 0.1
 
 # init the optimizer(s)
-optimizer1 = torch.optim.Adam([raw_model.transformer.wte.weight], lr=config.wte_lr,   betas=(0.9, 0.95), fused=True)
+optimizer1 = torch.optim.Adam([raw_model.transformer.wte.weight], lr=config.wte_lr, betas=(0.9, 0.95), fused=True)
 optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=config.lm_head_lr, betas=(0.9, 0.95), fused=True)
 params = list(raw_model.transformer.h.parameters())
 matrix_params = [p for p in params if p.ndim == 2]
@@ -118,15 +119,19 @@ for step in range(max_steps):
 	# do one step of the optimization
 	model.zero_grad(set_to_none=True)
 	loss_accum = 0.0
+	loss_last_accum = 0.0
 	for micro_step in range(grad_accum_steps):
 		x, y = train_loader.next_batch()
 		x, y = x.to(device), y.to(device)
 		# added after video, this field is also used by the forward pass.
 		with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
 			logits = model(x)
-		loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1), ignore_index=-1)
+		loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), y.view(-1), ignore_index=-1)
+		loss_last = F.cross_entropy(logits[:, -1, :].reshape(-1, logits.size(-1)), y[:, -1].view(-1), ignore_index=-1)
 		loss = loss / grad_accum_steps
+		loss_last = loss_last / grad_accum_steps
 		loss_accum += loss.detach()
+		loss_last_accum += loss_last.detach()
 		loss.backward()
 	norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 	# determine and set the learning rate for this iteration
@@ -144,7 +149,7 @@ for step in range(max_steps):
 	seq_per_sec = seq_processed / dt
 	print(f"step {step:5d} | loss: {loss_accum.item():.6f} | lr {get_lr(step):.4e} | dt: {dt*1000:.2f}ms | seq/sec: {seq_per_sec:.2f}")
 
-	wandb.log({"loss": loss_accum.item(), "lr": get_lr(step), "norm": norm})
+	wandb.log({"loss": loss_accum.item(), "lr": get_lr(step), "norm": norm, "last_loss": loss_last_accum.item()})
 
 # sweep_config = {
 #     'method': 'bayes',

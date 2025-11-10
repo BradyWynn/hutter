@@ -12,9 +12,9 @@ from torch import Tensor
 class GPTConfig:
     context_length: int = 1024
     vocab_size: int = 1256
-    n_layer: int = 4
-    n_head: int = 2
-    n_embd: int = 128
+    n_layer: int = 8
+    n_head: int = 4
+    n_embd: int = 256
 
     @property
     def head_n_embd(self):
@@ -116,15 +116,15 @@ class Attention(nn.Module):
 
         q, k = norm(q), norm(k)
 
-        # cos, sin = self.rotary(q)
-        # q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
+        cos, sin = self.rotary(q)
+        q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
 
         q, k, v = map(lambda x: x.transpose(1, 2), (q, k, v))
 
         if self.kv_cache is not None:
             k, v = self.kv_cache.update(input_pos, k, v)
 
-        y = F.scaled_dot_product_attention(q, k, v)
+        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
         y = y.transpose(1, 2).contiguous().view(bsz, seqlen, self.config.n_embd)
         return self.c_proj(y)
 
@@ -161,6 +161,6 @@ class GPT(nn.Module):
         for layer in self.transformer.h:
             x = layer(x, input_pos, mask)
 
-        x = norm(x)[:, -1:, :]
+        x = norm(x)
         logits = self.lm_head(x)
         return logits
