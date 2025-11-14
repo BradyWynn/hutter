@@ -2,6 +2,7 @@ __pycache__/
 log/
 wandb/
 model/
+compressed_model/
 enwik9
 enwik9.npy
 tokenized_enwik9.npy

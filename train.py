@@ -6,6 +6,8 @@ import numpy as np
 from model import GPT, GPTConfig
 import wandb
 from muon import SingleDeviceMuon
+# import transformer_engine.pytorch as te
+# from transformer_engine.common.recipe import Format, DelayedScaling, MXFP8BlockScaling, NVFP4BlockScaling
 
 def load_tokens():
 	with open('tokenized_enwik9', 'rb') as f:
@@ -34,8 +36,8 @@ print(f"using device: {device}")
 # added after video, pytorch can be serious about it's device vs. device_type distinction
 device_type = "cuda" if device.startswith("cuda") else "cpu"
 
-total_batch_size = 2**10 # 2**19, ~0.5M, in number of tokens
-B = 128 # micro batch size
+total_batch_size = 2**8 # 2**19, ~0.5M, in number of tokens
+B = 32 # micro batch size
 assert total_batch_size % B == 0, "make sure total_batch_size is divisible by B"
 grad_accum_steps = total_batch_size // B
 print(f"total desired batch size: {total_batch_size}")
@@ -57,24 +59,30 @@ wandb.init(
 	"n_embd": GPTConfig.n_embd,
 	"total_batch_size": total_batch_size,
 	"B": B,
-	"muon_lr": 0.012592276652172395,
-	"wte_lr": 0.011719614956921554,
-	"lm_head_lr": 0.00457115202466,
+	"muon_lr": 0.09798386739382728,
+	"wte_lr": 0.6949575998225807,
+	"lm_head_lr": 0.00492022884757,
 	}
 )
+
+# fp8_format = Format.HYBRID  # E4M3 during forward pass, E5M2 during backward pass
+# fp8_recipe = DelayedScaling(fp8_format=fp8_format, amax_history_len=16, amax_compute_algo="max")
+# mxfp8_format = Format.E4M3  # E4M3 used everywhere
+# mxfp8_recipe = MXFP8BlockScaling(fp8_format=mxfp8_format)
+# nvfp4_recipe = NVFP4BlockScaling()
 
 # def train():
 torch.manual_seed(0)
 # wandb.init(project='hutter')
 config = wandb.config
 raw_model = GPT()
-raw_model.load_state_dict(torch.load('log/stilted-donkey-1901.pt', weights_only=False)['model'])
+# raw_model.load_state_dict(torch.load('log/stilted-donkey-1901.pt', weights_only=False)['model'])
 raw_model = raw_model.to(device)
 model = torch.compile(raw_model)
 
 max_steps = 10000#(len(train_loader.tokens) // total_batch_size)
 
-cooldown_frac = 1.0
+cooldown_frac = 0.0
 def get_lr(step: int):
 	x = step / max_steps # progress in training
 	assert 0 <= x < 1
@@ -104,7 +112,7 @@ for step in range(max_steps):
 	t0 = time.time()
 
 	# once in a while evaluate our validation loss
-	if step == (max_steps - 1):
+	if step == (max_steps - 1) or step % 500 == 0:
 		# optionally write model checkpoints
 		checkpoint_path = os.path.join(log_dir, f"model_{step:05d}.pt")
 		checkpoint = {
@@ -124,6 +132,7 @@ for step in range(max_steps):
 		x, y = train_loader.next_batch()
 		x, y = x.to(device), y.to(device)
 		# added after video, this field is also used by the forward pass.
+		# with te.autocast(enabled=True, recipe=fp8_recipe):
 		with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
 			logits = model(x)
 		loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), y.view(-1), ignore_index=-1)

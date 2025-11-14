@@ -33,17 +33,19 @@ int replace_and_compact(short* arr, int size, Bigram bigram, int new_token){
 int main(){
 	int arr_size = pow(10, 9);
 
+    int num_tokens = 1000;
+
 	char dir[] = "enwik9";
 	char out[] = "tokenized_enwik9";
 	data = fopen(dir, "r");
     FILE* first_file = fopen("first", "r");
     FILE* second_file = fopen("second", "r");
 
-    int* first = (int*)malloc(1000 * sizeof(int));
-    int* second = (int*)malloc(1000 * sizeof(int));
+    int* first = (int*)malloc(num_tokens * sizeof(int));
+    int* second = (int*)malloc(num_tokens * sizeof(int));
 
-    fread(first, sizeof(int), 1000, first_file);
-    fread(second, sizeof(int), 1000, second_file);
+    fread(first, sizeof(int), num_tokens, first_file);
+    fread(second, sizeof(int), num_tokens, second_file);
 
     fclose(first_file);
     fclose(second_file);
@@ -58,11 +60,11 @@ int main(){
 	}
 	free(arr);
 
-    for (int i = 0; i < 1000; i++){
+    for (int i = 0; i < num_tokens; i++){
         Bigram bigram = {first[i], second[i]};
         int removed = replace_and_compact(int16_arr, arr_size, bigram, 256 + i);
         arr_size -= removed;
-        printf("%f%% | %d | %d\n", (float)i/1000 * 100, i, arr_size);
+        printf("%f%% | %d | %d\n", (float)i/num_tokens * 100, i, arr_size);
     }
     
 	file = fopen(out, "wb");
