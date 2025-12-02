@@ -7,13 +7,11 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from torch import Tensor
-import transformer_engine.pytorch as te
-from transformer_engine.common import recipe
 
 @dataclass
 class GPTConfig:
     context_length: int = 1024
-    vocab_size: int = 1264
+    vocab_size: int = 5264
     n_layer: int = 8
     n_head: int = 8
     n_embd: int = 512
@@ -76,8 +74,8 @@ def apply_rotary_emb(x, cos, sin):
 class FeedForward(nn.Module):
     def __init__(self, config: GPTConfig) -> None:
         super().__init__()
-        self.c_fc = te.Linear(config.n_embd, 4*config.n_embd, bias=False)
-        self.c_proj = te.Linear(4*config.n_embd, config.n_embd, bias=False)
+        self.c_fc = nn.Linear(config.n_embd, 4*config.n_embd, bias=False)
+        self.c_proj = nn.Linear(4*config.n_embd, config.n_embd, bias=False)
         self.c_proj.weight.data.zero_()
 
     def forward(self, x: Tensor) -> Tensor:
@@ -101,8 +99,8 @@ class Attention(nn.Module):
         assert config.n_embd % config.n_head == 0
         self.config = config
         # key, query, value projections for all heads, but in a batch
-        self.c_attn = te.Linear(config.n_embd, 3*config.n_embd, bias=False)
-        self.c_proj = te.Linear(config.n_embd, config.n_embd, bias=False)
+        self.c_attn = nn.Linear(config.n_embd, 3*config.n_embd, bias=False)
+        self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
         self.rotary = Rotary(config.head_n_embd)
         self.c_proj.weight.data.zero_()
         self.kv_cache = None
@@ -141,7 +139,7 @@ class GPT(nn.Module):
         }
 
         self.transformer = nn.ModuleDict(transformer)
-        self.lm_head = te.Linear(config.n_embd, config.vocab_size, bias=False)
+        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         # self.transformer.wte.weight = self.lm_head.weight
         self.lm_head.weight.data.zero_()
 

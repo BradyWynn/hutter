@@ -6,8 +6,6 @@ import numpy as np
 from model import GPT, GPTConfig
 import wandb
 from muon import SingleDeviceMuon
-# import transformer_engine.pytorch as te
-# from transformer_engine.common.recipe import Format, DelayedScaling, MXFP8BlockScaling, NVFP4BlockScaling
 
 def load_tokens():
 	with open('tokenized_enwik9', 'rb') as f:
@@ -59,28 +57,23 @@ wandb.init(
 	"n_embd": GPTConfig.n_embd,
 	"total_batch_size": total_batch_size,
 	"B": B,
-	"muon_lr": 0.09798386739382728,
-	"wte_lr": 0.6949575998225807,
-	"lm_head_lr": 0.00492022884757,
+	"muon_lr": 0.08247841834146076,
+	"wte_lr": 0.49602697067024776,
+	"lm_head_lr": 0.00323854026492,
+	"num_tokens": len(train_loader.tokens)
 	}
 )
-
-# fp8_format = Format.HYBRID  # E4M3 during forward pass, E5M2 during backward pass
-# fp8_recipe = DelayedScaling(fp8_format=fp8_format, amax_history_len=16, amax_compute_algo="max")
-# mxfp8_format = Format.E4M3  # E4M3 used everywhere
-# mxfp8_recipe = MXFP8BlockScaling(fp8_format=mxfp8_format)
-# nvfp4_recipe = NVFP4BlockScaling()
 
 # def train():
 torch.manual_seed(0)
 # wandb.init(project='hutter')
 config = wandb.config
 raw_model = GPT()
-# raw_model.load_state_dict(torch.load('log/stilted-donkey-1901.pt', weights_only=False)['model'])
+raw_model.load_state_dict(torch.load('log/zany-field-2619.pt', weights_only=False)['model'])
 raw_model = raw_model.to(device)
 model = torch.compile(raw_model)
 
-max_steps = 10000#(len(train_loader.tokens) // total_batch_size)
+max_steps = 100000#(len(train_loader.tokens) // total_batch_size)
 
 cooldown_frac = 0.0
 def get_lr(step: int):

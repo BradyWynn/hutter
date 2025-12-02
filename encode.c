@@ -33,7 +33,7 @@ int replace_and_compact(short* arr, int size, Bigram bigram, int new_token){
 int main(){
 	int arr_size = pow(10, 9);
 
-    int num_tokens = 1000;
+    int num_tokens = 5000;
 
 	char dir[] = "enwik9";
 	char out[] = "tokenized_enwik9";

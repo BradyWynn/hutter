@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <math.h>
 
-#define TABLE_SIZE 2000000
+#define TABLE_SIZE 20000000
 
 FILE* data;
 FILE* file;
@@ -104,10 +104,10 @@ int main(){
 	}
 	free(arr);
 
-	int num_tokens = 1000;
+	int num_tokens = 5000;
 
-	int first[num_tokens] = {0};
-	int second[num_tokens] = {0};
+	int first[num_tokens];
+	int second[num_tokens];
 
 	for (int i = 0; i < num_tokens; i++){
 		BigramEntry bigram = get_bigram(int16_arr, arr_size);
