@@ -10,7 +10,7 @@ from torch import Tensor
 
 @dataclass
 class GPTConfig:
-    context_length: int = 1024
+    context_length: int = 512
     vocab_size: int = 5264
     n_layer: int = 8
     n_head: int = 8
