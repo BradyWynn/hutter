@@ -3,7 +3,7 @@ import time
 import torch
 from torch.nn import functional as F
 import numpy as np
-from model import GPT, GPTConfig
+from model import GPT, GPTConfig, Quantized_Linear
 import wandb
 from muon import SingleDeviceMuon
 
@@ -60,6 +60,8 @@ wandb.init(
 	"muon_lr": 0.08247841834146076,
 	"wte_lr": 0.49602697067024776,
 	"lm_head_lr": 0.00323854026492,
+	"b_lr": 0.5,
+	"e_lr": 0.5,
 	"num_tokens": len(train_loader.tokens)
 	}
 )
@@ -69,9 +71,11 @@ torch.manual_seed(0)
 # wandb.init(project='hutter')
 config = wandb.config
 raw_model = GPT()
-raw_model.load_state_dict(torch.load('log/zany-field-2619.pt', weights_only=False)['model'])
+# raw_model.load_state_dict(torch.load('log/zany-field-2619.pt', weights_only=False)['model'])
 raw_model = raw_model.to(device)
 model = torch.compile(raw_model)
+
+weight_count = 12*GPTConfig.n_layer*GPTConfig.n_embd**2 + GPTConfig.vocab_size*GPTConfig.n_embd
 
 max_steps = 100000#(len(train_loader.tokens) // total_batch_size)
 
@@ -89,8 +93,12 @@ def get_lr(step: int):
 optimizer1 = torch.optim.Adam([raw_model.transformer.wte.weight], lr=config.wte_lr, betas=(0.9, 0.95), fused=True)
 optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=config.lm_head_lr, betas=(0.9, 0.95), fused=True)
 params = list(raw_model.transformer.h.parameters())
+e_params = [m.e for m in raw_model.modules() if isinstance(m, Quantized_Linear)]
+b_params = [m.b for m in raw_model.modules() if isinstance(m, Quantized_Linear)]
 matrix_params = [p for p in params if p.ndim == 2]
 optimizer3 = SingleDeviceMuon(matrix_params, lr=config.muon_lr, momentum=0.95)
+optimizer4 = torch.optim.Adam(e_params, lr=config.e_lr, betas=(0.9, 0.95), fused=True)
+optimizer5 = torch.optim.Adam(b_params, lr=config.b_lr, betas=(0.9, 0.95), fused=True)
 optimizers = [optimizer1, optimizer2, optimizer3]
 
 for opt in optimizers:
@@ -121,6 +129,8 @@ for step in range(max_steps):
 	model.zero_grad(set_to_none=True)
 	loss_accum = 0.0
 	loss_last_accum = 0.0
+	ce_loss_accum = 0.0
+	q_loss_accum = 0.0
 	for micro_step in range(grad_accum_steps):
 		x, y = train_loader.next_batch()
 		x, y = x.to(device), y.to(device)
@@ -129,8 +139,16 @@ for step in range(max_steps):
 		with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
 			logits = model(x)
 		loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), y.view(-1), ignore_index=-1)
+		ce_loss = loss.detach()
+		Q = torch.stack([m.qbits() for m in model.modules() if isinstance(m, Quantized_Linear)]).sum()
+		Q = Q / weight_count
+		# loss = loss + 0.0*Q
 		loss_last = F.cross_entropy(logits[:, -1, :].reshape(-1, logits.size(-1)), y[:, -1].view(-1), ignore_index=-1)
 		loss = loss / grad_accum_steps
+		ce_loss = ce_loss / grad_accum_steps
+		Q = Q / grad_accum_steps
+		ce_loss_accum += ce_loss
+		q_loss_accum += Q.detach()
 		loss_last = loss_last / grad_accum_steps
 		loss_accum += loss.detach()
 		loss_last_accum += loss_last.detach()
@@ -151,7 +169,14 @@ for step in range(max_steps):
 	seq_per_sec = seq_processed / dt
 	print(f"step {step:5d} | loss: {loss_accum.item():.6f} | lr {get_lr(step):.4e} | dt: {dt*1000:.2f}ms | seq/sec: {seq_per_sec:.2f}")
 
-	wandb.log({"loss": loss_accum.item(), "lr": get_lr(step), "norm": norm, "last_loss": loss_last_accum.item()})
+	wandb.log({
+		"loss": ce_loss_accum.item(),
+		"bytes": (config.num_tokens * ce_loss_accum.item() * np.log2(np.e) + weight_count * q_loss_accum)/8, 
+		"bits_per_weight": q_loss_accum,
+		"lr": get_lr(step),
+		"norm": norm,
+		"last_loss": loss_last_accum.item()
+		})
 
 # sweep_config = {
 #     'method': 'bayes',
@@ -163,6 +188,8 @@ for step in range(max_steps):
 # 		'muon_lr': {'distribution': 'uniform', 'min': 0.01, 'max': 0.1},
 # 		'wte_lr': {'distribution': 'uniform', 'min': 0.01, 'max': 0.8},
 # 		'lm_head_lr': {'distribution': 'uniform', 'min': 0.001, 'max': 0.1},
+# 		'b_lr': {'distribution': 'uniform', 'min': 0.001, 'max': 0.2},
+# 		'e_lr': {'distribution': 'uniform', 'min': 0.001, 'max': 0.1},
 # 	}
 #     }
 
