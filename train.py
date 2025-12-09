@@ -3,7 +3,7 @@ import time
 import torch
 from torch.nn import functional as F
 import numpy as np
-from model import GPT, GPTConfig, Quantized_Linear
+from model import GPT, GPTConfig, Quantized_Linear, Rotary
 import wandb
 from muon import SingleDeviceMuon
 
@@ -35,7 +35,7 @@ print(f"using device: {device}")
 device_type = "cuda" if device.startswith("cuda") else "cpu"
 
 total_batch_size = 2**7 # 2**19, ~0.5M, in number of tokens
-B = 64 # micro batch size
+B = 16 # micro batch size
 assert total_batch_size % B == 0, "make sure total_batch_size is divisible by B"
 grad_accum_steps = total_batch_size // B
 print(f"total desired batch size: {total_batch_size}")
@@ -57,11 +57,11 @@ wandb.init(
 	"n_embd": GPTConfig.n_embd,
 	"total_batch_size": total_batch_size,
 	"B": B,
-	"muon_lr": 0.0660514411327612,
-	"wte_lr": 0.3511544667902772,
-	"lm_head_lr": 0.05895759060055934,
-	"b_lr": 0.03553869892963302,
-	"e_lr": 0.02318440504933105,
+	"muon_lr": 0.08461969484908016,
+	"wte_lr": 0.5956666725475398,
+	"lm_head_lr": 0.00380042592753,
+	"b_lr": 0.034601962195880175,
+	"e_lr": 0.034601962195880175,
 	"num_tokens": len(train_loader.tokens)
 	}
 )
@@ -71,7 +71,7 @@ torch.manual_seed(0)
 # wandb.init(project='hutter')
 config = wandb.config
 raw_model = GPT()
-raw_model.load_state_dict(torch.load('log/electric-bush-2630.pt', weights_only=False)['model'])
+# raw_model.load_state_dict(torch.load('log/driven-waterfall-2818.pt', weights_only=False)['model'])
 raw_model = raw_model.to(device)
 model = torch.compile(raw_model)
 
@@ -92,11 +92,10 @@ def get_lr(step: int):
 # init the optimizer(s)
 optimizer1 = torch.optim.Adam([raw_model.transformer.wte.weight], lr=config.wte_lr, betas=(0.9, 0.95), fused=True)
 optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=config.lm_head_lr, betas=(0.9, 0.95), fused=True)
-params = list(raw_model.transformer.h.parameters())
+w_params = [m.weight for m in raw_model.transformer.h.modules() if isinstance(m, Quantized_Linear)]
 e_params = [m.e for m in raw_model.modules() if isinstance(m, Quantized_Linear)]
 b_params = [m.b for m in raw_model.modules() if isinstance(m, Quantized_Linear)]
-matrix_params = [p for p in params if p.ndim == 2]
-optimizer3 = SingleDeviceMuon(matrix_params, lr=config.muon_lr, momentum=0.95)
+optimizer3 = SingleDeviceMuon(w_params, lr=config.muon_lr, momentum=0.95)
 optimizer4 = torch.optim.Adam(e_params, lr=config.e_lr, betas=(0.9, 0.95), fused=True)
 optimizer5 = torch.optim.Adam(b_params, lr=config.b_lr, betas=(0.9, 0.95), fused=True)
 optimizers = [optimizer1, optimizer2, optimizer3, optimizer4, optimizer5]
@@ -142,7 +141,7 @@ for step in range(max_steps):
 		ce_loss = loss.detach()
 		Q = torch.stack([m.qbits() for m in model.modules() if isinstance(m, Quantized_Linear)]).sum()
 		Q = Q / weight_count
-		loss = (len(train_loader.tokens) * loss * np.log2(np.e) + weight_count * Q)/8
+		loss = (len(train_loader.tokens) * loss * np.log2(np.e) + weight_count * Q)/(8*10**8)
 		loss_last = F.cross_entropy(logits[:, -1, :].reshape(-1, logits.size(-1)), y[:, -1].view(-1), ignore_index=-1)
 		loss = loss / grad_accum_steps
 		ce_loss = ce_loss / grad_accum_steps
@@ -153,7 +152,7 @@ for step in range(max_steps):
 		loss_accum += loss.detach()
 		loss_last_accum += loss_last.detach()
 		loss.backward()
-	norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+	norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 10000)
 	# determine and set the learning rate for this iteration
 	for opt in optimizers:
 		for group in opt.param_groups:
@@ -163,6 +162,7 @@ for step in range(max_steps):
 		for m in raw_model.modules():
 			if isinstance(m, Quantized_Linear):
 				m.e.clamp_(-16.0, 16.0)
+				m.b.clamp_(0, 16.0)
 
 	for opt in optimizers:
 		opt.step()
@@ -198,8 +198,8 @@ for step in range(max_steps):
 # 		'muon_lr': {'distribution': 'uniform', 'min': 0.01, 'max': 0.1},
 # 		'wte_lr': {'distribution': 'uniform', 'min': 0.01, 'max': 0.8},
 # 		'lm_head_lr': {'distribution': 'uniform', 'min': 0.001, 'max': 0.1},
-# 		'b_lr': {'distribution': 'uniform', 'min': 0.001, 'max': 0.2},
-# 		'e_lr': {'distribution': 'uniform', 'min': 0.001, 'max': 0.1},
+# 		# 'b_lr': {'distribution': 'uniform', 'min': 0.001, 'max': 0.2},
+# 		# 'e_lr': {'distribution': 'uniform', 'min': 0.001, 'max': 0.1},
 # 	}
 #     }
 

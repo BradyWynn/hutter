@@ -23,11 +23,17 @@ device = torch.device('cuda')
 #             # print(module._get_weight_tensors())
 #             torch.save(module.quantizers['scaling_fwd'][1](module._get_weight_tensors()[0])._data, f"{os.path.join('model', name)}.pt")
 
-model = torch.load('log/model_00000.pt', map_location=torch.device('cpu'), weights_only=False)['model']
+model = torch.load('log/cosmic-rain-2825.pt', map_location=torch.device('cpu'), weights_only=False)['model']
 # plt.hist((model['transformer.wte.weight']).flatten(), 100)
+layer = model['transformer.h.0.mlp.c_proj.b']
+plt.imshow(layer)
+# plt.imshow(layer.repeat(1, 512))
+print(layer.shape)
+plt.colorbar()
+plt.show()
 # plt.show()
 # plt.hist(model['transformer.wte.weight'].flatten(), 2**8)
 # plt.show()
-for i in model.keys():
-    print(model[i].dtype, i)
-    torch.save(model[i], f"{os.path.join('model', i)}.pt")
+# for i in model.keys():
+#     print(model[i].dtype, i)
+#     torch.save(model[i], f"{os.path.join('model', i)}.pt")

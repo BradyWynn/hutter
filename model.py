@@ -10,7 +10,7 @@ from torch import Tensor
 
 @dataclass
 class GPTConfig:
-    context_length: int = 512
+    context_length: int = 2048
     vocab_size: int = 5264
     n_layer: int = 8
     n_head: int = 8
@@ -78,18 +78,23 @@ class Quantized_Linear(nn.Module):
         out_features: int,
         device=None,
         dtype=None,
+        row_params=True,
     ) -> None:
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
         self.weight = nn.Parameter(torch.empty((out_features, in_features), **factory_kwargs))
-        self.e = nn.Parameter(torch.ones((out_features, in_features), **factory_kwargs) * -8)
-        self.b = nn.Parameter(torch.ones((out_features, in_features), **factory_kwargs) * 16.)
+        if row_params:
+            q_shape = (out_features, 1)
+        else:
+            q_shape = (1, in_features)
+        self.e = nn.Parameter(torch.ones(q_shape, **factory_kwargs) * -8)
+        self.b = nn.Parameter(torch.ones(q_shape, **factory_kwargs) * 16.)
         self.reset_parameters()
 
     def qbits(self):
-        return self.b.relu().sum()
+        return self.b.relu().sum() * (math.prod(self.weight.shape)/(self.b.flatten()).shape[0])
     
     def qweight(self):
         return torch.min(torch.max(2**-self.e * self.weight, -2**(self.b.relu()-1)), 2**(self.b.relu()-1) - 1)
@@ -106,7 +111,7 @@ class FeedForward(nn.Module):
     def __init__(self, config: GPTConfig) -> None:
         super().__init__()
         self.c_fc = Quantized_Linear(config.n_embd, 4*config.n_embd)
-        self.c_proj = Quantized_Linear(4*config.n_embd, config.n_embd)
+        self.c_proj = Quantized_Linear(4*config.n_embd, config.n_embd, row_params=False)
         self.c_proj.weight.data.zero_()
 
     def forward(self, x: Tensor) -> Tensor:
@@ -131,7 +136,7 @@ class Attention(nn.Module):
         self.config = config
         # key, query, value projections for all heads, but in a batch
         self.c_attn = Quantized_Linear(config.n_embd, 3*config.n_embd)
-        self.c_proj = Quantized_Linear(config.n_embd, config.n_embd)
+        self.c_proj = Quantized_Linear(config.n_embd, config.n_embd, row_params=False)
         self.rotary = Rotary(config.head_n_embd)
         self.c_proj.weight.data.zero_()
         self.kv_cache = None
