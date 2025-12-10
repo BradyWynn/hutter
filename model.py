@@ -90,11 +90,11 @@ class Quantized_Linear(nn.Module):
         else:
             q_shape = (1, in_features)
         self.e = nn.Parameter(torch.ones(q_shape, **factory_kwargs) * -8)
-        self.b = nn.Parameter(torch.ones(q_shape, **factory_kwargs) * 16.)
+        self.b = nn.Parameter(torch.ones((out_features, in_features), **factory_kwargs) * 16.)
         self.reset_parameters()
 
     def qbits(self):
-        return self.b.relu().sum() * (math.prod(self.weight.shape)/(self.b.flatten()).shape[0])
+        return self.b.relu().sum()
     
     def qweight(self):
         return torch.min(torch.max(2**-self.e * self.weight, -2**(self.b.relu()-1)), 2**(self.b.relu()-1) - 1)
@@ -106,6 +106,40 @@ class Quantized_Linear(nn.Module):
         qw = self.qweight()
         w = (qw.round() - qw).detach() + qw  # straight through estimator
         return F.linear(x, 2**self.e * w)
+    
+class Quantized_Embedding(nn.Module):
+    def __init__(
+        self,
+        num_embeddings: int,
+        embedding_dim: int,
+        device=None,
+        dtype=None,
+    ) -> None:
+        factory_kwargs = {"device": device, "dtype": dtype}
+        super().__init__()
+        self.num_embeddings = num_embeddings
+        self.embedding_dim = embedding_dim
+        self.weight = nn.Parameter(torch.empty((num_embeddings, embedding_dim), **factory_kwargs))
+        self.e = nn.Parameter(torch.ones((num_embeddings, embedding_dim), **factory_kwargs) * -8)
+        self.b = nn.Parameter(torch.ones((num_embeddings, embedding_dim), **factory_kwargs) * 16.)
+        self.reset_parameters()
+
+    def qbits(self):
+        return self.b.relu().sum()
+    
+    def qweight(self):
+        return torch.min(torch.max(2**-self.e * self.weight, -2**(self.b.relu()-1)), 2**(self.b.relu()-1) - 1)
+    
+    def reset_parameters(self) -> None:
+        nn.init.normal_(self.weight)
+    
+    def forward(self, input: Tensor) -> Tensor:
+        qw = self.qweight()
+        w = (qw.round() - qw).detach() + qw  # straight through estimator
+        return F.embedding(
+            input,
+            2**self.e * w,
+        )
 
 class FeedForward(nn.Module):
     def __init__(self, config: GPTConfig) -> None:
@@ -170,7 +204,7 @@ class GPT(nn.Module):
         self.config = config
 
         transformer = {
-        'wte' : nn.Embedding(config.vocab_size, config.n_embd),
+        'wte' : Quantized_Embedding(config.vocab_size, config.n_embd),
         'h'   : nn.ModuleList(TransformerBlock(config) for _ in range(config.n_layer)),
         }
 

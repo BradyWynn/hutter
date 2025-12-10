@@ -3,7 +3,7 @@ import time
 import torch
 from torch.nn import functional as F
 import numpy as np
-from model import GPT, GPTConfig, Quantized_Linear, Rotary
+from model import GPT, GPTConfig, Quantized_Linear, Quantized_Embedding
 import wandb
 from muon import SingleDeviceMuon
 
@@ -71,11 +71,11 @@ torch.manual_seed(0)
 # wandb.init(project='hutter')
 config = wandb.config
 raw_model = GPT()
-# raw_model.load_state_dict(torch.load('log/driven-waterfall-2818.pt', weights_only=False)['model'])
+# raw_model.load_state_dict(torch.load('log/glamorous-leaf-2831.pt', weights_only=False)['model'])
 raw_model = raw_model.to(device)
 model = torch.compile(raw_model)
 
-weight_count = 12*GPTConfig.n_layer*GPTConfig.n_embd**2 + GPTConfig.vocab_size*GPTConfig.n_embd
+weight_count = 12*GPTConfig.n_layer*GPTConfig.n_embd**2 + 2*GPTConfig.vocab_size*GPTConfig.n_embd
 
 max_steps = 100000#(len(train_loader.tokens) // total_batch_size)
 
@@ -93,8 +93,8 @@ def get_lr(step: int):
 optimizer1 = torch.optim.Adam([raw_model.transformer.wte.weight], lr=config.wte_lr, betas=(0.9, 0.95), fused=True)
 optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=config.lm_head_lr, betas=(0.9, 0.95), fused=True)
 w_params = [m.weight for m in raw_model.transformer.h.modules() if isinstance(m, Quantized_Linear)]
-e_params = [m.e for m in raw_model.modules() if isinstance(m, Quantized_Linear)]
-b_params = [m.b for m in raw_model.modules() if isinstance(m, Quantized_Linear)]
+e_params = [m.e for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))]
+b_params = [m.b for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))]
 optimizer3 = SingleDeviceMuon(w_params, lr=config.muon_lr, momentum=0.95)
 optimizer4 = torch.optim.Adam(e_params, lr=config.e_lr, betas=(0.9, 0.95), fused=True)
 optimizer5 = torch.optim.Adam(b_params, lr=config.b_lr, betas=(0.9, 0.95), fused=True)
@@ -139,7 +139,7 @@ for step in range(max_steps):
 			logits = model(x)
 		loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), y.view(-1), ignore_index=-1)
 		ce_loss = loss.detach()
-		Q = torch.stack([m.qbits() for m in model.modules() if isinstance(m, Quantized_Linear)]).sum()
+		Q = torch.stack([m.qbits() for m in model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))]).sum()
 		Q = Q / weight_count
 		loss = (len(train_loader.tokens) * loss * np.log2(np.e) + weight_count * Q)/(8*10**8)
 		loss_last = F.cross_entropy(logits[:, -1, :].reshape(-1, logits.size(-1)), y[:, -1].view(-1), ignore_index=-1)
@@ -160,7 +160,7 @@ for step in range(max_steps):
 	# prevent nan
 	with torch.no_grad():
 		for m in raw_model.modules():
-			if isinstance(m, Quantized_Linear):
+			if isinstance(m, (Quantized_Linear, Quantized_Embedding)):
 				m.e.clamp_(-16.0, 16.0)
 				m.b.clamp_(0, 16.0)
 
@@ -174,8 +174,8 @@ for step in range(max_steps):
 	seq_per_sec = seq_processed / dt
 	print(f"step {step:5d} | loss: {loss_accum.item():.6f} | lr {get_lr(step):.4e} | dt: {dt*1000:.2f}ms | seq/sec: {seq_per_sec:.2f}")
 
-	es = torch.cat([m.e.detach().float().view(-1) for m in raw_model.modules() if isinstance(m, Quantized_Linear)])
-	bs = torch.cat([m.b.detach().float().view(-1) for m in raw_model.modules() if isinstance(m, Quantized_Linear)])
+	es = torch.cat([m.e.detach().float().view(-1) for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))])
+	bs = torch.cat([m.b.detach().float().view(-1) for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))])
 
 	wandb.log({
 		"loss": ce_loss_accum.item(),
