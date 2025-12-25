@@ -57,11 +57,11 @@ wandb.init(
 	"n_embd": GPTConfig.n_embd,
 	"total_batch_size": total_batch_size,
 	"B": B,
-	"muon_lr": 0.08461969484908016,
-	"wte_lr": 0.5956666725475398,
-	"lm_head_lr": 0.00380042592753,
-	"b_lr": 0.034601962195880175,
-	"e_lr": 0.034601962195880175,
+	"muon_lr": 0.020466009566743288,
+	"wte_lr": 0.18293164620959812,
+	"lm_head_lr": 0.00090932076906,
+	"b_lr": 0.034601962195880175/2,
+	"e_lr": 0.034601962195880175/2,
 	"num_tokens": len(train_loader.tokens)
 	}
 )
@@ -71,7 +71,7 @@ torch.manual_seed(0)
 # wandb.init(project='hutter')
 config = wandb.config
 raw_model = GPT()
-# raw_model.load_state_dict(torch.load('log/glamorous-leaf-2831.pt', weights_only=False)['model'])
+# raw_model.load_state_dict(torch.load('log/wise-feather-2874.pt', weights_only=False)['model'])
 raw_model = raw_model.to(device)
 model = torch.compile(raw_model)
 
@@ -96,9 +96,9 @@ w_params = [m.weight for m in raw_model.transformer.h.modules() if isinstance(m,
 e_params = [m.e for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))]
 b_params = [m.b for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))]
 optimizer3 = SingleDeviceMuon(w_params, lr=config.muon_lr, momentum=0.95)
-optimizer4 = torch.optim.Adam(e_params, lr=config.e_lr, betas=(0.9, 0.95), fused=True)
-optimizer5 = torch.optim.Adam(b_params, lr=config.b_lr, betas=(0.9, 0.95), fused=True)
-optimizers = [optimizer1, optimizer2, optimizer3, optimizer4, optimizer5]
+# optimizer4 = torch.optim.Adam(e_params, lr=config.e_lr, betas=(0.9, 0.95), fused=True)
+# optimizer5 = torch.optim.Adam(b_params, lr=config.b_lr, betas=(0.9, 0.95), fused=True)
+optimizers = [optimizer1, optimizer2, optimizer3]
 
 for opt in optimizers:
 	for group in opt.param_groups:
@@ -108,7 +108,7 @@ for opt in optimizers:
 log_dir = "log"
 os.makedirs(log_dir, exist_ok=True)
 
-for step in range(max_steps):
+for step in range(0, max_steps):
 	t0 = time.time()
 
 	# once in a while evaluate our validation loss
@@ -130,29 +130,33 @@ for step in range(max_steps):
 	loss_last_accum = 0.0
 	ce_loss_accum = 0.0
 	q_loss_accum = 0.0
+	act_norm_accum = 0.0
 	for micro_step in range(grad_accum_steps):
 		x, y = train_loader.next_batch()
 		x, y = x.to(device), y.to(device)
 		# added after video, this field is also used by the forward pass.
 		# with te.autocast(enabled=True, recipe=fp8_recipe):
 		with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-			logits = model(x)
+			logits, act_norm = model(x)
 		loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), y.view(-1), ignore_index=-1)
 		ce_loss = loss.detach()
 		Q = torch.stack([m.qbits() for m in model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))]).sum()
 		Q = Q / weight_count
-		loss = (len(train_loader.tokens) * loss * np.log2(np.e) + weight_count * Q)/(8*10**8)
+		# loss = (len(train_loader.tokens) * loss * np.log2(np.e) + weight_count * Q)/(8*10**8)
 		loss_last = F.cross_entropy(logits[:, -1, :].reshape(-1, logits.size(-1)), y[:, -1].view(-1), ignore_index=-1)
 		loss = loss / grad_accum_steps
 		ce_loss = ce_loss / grad_accum_steps
 		Q = Q / grad_accum_steps
 		ce_loss_accum += ce_loss
 		q_loss_accum += Q.detach()
+		act_norm_accum += act_norm.item() / grad_accum_steps
 		loss_last = loss_last / grad_accum_steps
 		loss_accum += loss.detach()
 		loss_last_accum += loss_last.detach()
 		loss.backward()
-	norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 10000)
+	weight_norm = torch.nn.utils.clip_grad_norm_(w_params, 10000)
+	e_norm = torch.nn.utils.clip_grad_norm_(e_params, 10000)
+	b_norm = torch.nn.utils.clip_grad_norm_(b_params, 10000)
 	# determine and set the learning rate for this iteration
 	for opt in optimizers:
 		for group in opt.param_groups:
@@ -182,16 +186,20 @@ for step in range(max_steps):
 		"bytes": (len(train_loader.tokens) * ce_loss_accum.item() * np.log2(np.e) + weight_count * q_loss_accum)/8, 
 		"bits_per_weight": q_loss_accum,
 		"lr": get_lr(step),
-		"norm": norm,
+		"weight_norm": weight_norm,
+		"b_norm": b_norm,
+		"e_norm": e_norm,
 		"last_loss": loss_last_accum.item(),
 		'e_min': es.min().item(), 'e_max': es.max().item(), 'e_mean': es.mean().item(),
 		'b_min': bs.min().item(), 'b_max': bs.max().item(), 'b_mean': bs.mean().item(),
+		'step': step,
+		'act_norm': act_norm_accum
 		})
 
 # sweep_config = {
 #     'method': 'bayes',
 # 	'metric': {
-# 		'name': 'bytes',
+# 		'name': 'loss',
 # 		'goal': 'minimize'
 # 	},
 # 	'parameters': {

@@ -4,35 +4,37 @@ from model import GPT
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
 from tqdm import tqdm
-import tiktoken
+
+def norm(x):
+    return F.rms_norm(x, (x.size(-1),))
 
 model = GPT()
-model.load_state_dict(torch.load("model_11899.pt", map_location=torch.device('cpu'), weights_only=False)['model'])
-model = model.bfloat16()
+model.load_state_dict(torch.load('log/model_05000.pt', weights_only=False)['model'])
 
-enc = tiktoken.get_encoding("gpt2")
+with open('tokenized_enwik9', 'rb') as f:
+    data = f.read()
+tokens = np.frombuffer(data, dtype=np.uint16)
+tokens = torch.tensor(tokens, dtype=torch.uint16)
 
-str_context = "The industrial revolution and its consequences have been a disaster for the human race."
-tokens = torch.tensor(enc.encode(str_context), dtype=torch.long)
+x = tokens[:1024].unsqueeze(0).long()
+print(x.flatten().tolist())
 
-# print(str_context, end="")
+x = model.transformer.wte(x)
 
-with torch.no_grad():
-    context = tokens[:512]
+mask = None
+input_pos = None
 
-    model.setup_caches(max_batch_size=1, max_seq_length=1024)
+for layer in model.transformer.h[:8]:
+    x = layer(x, input_pos, mask)
 
-    # prefill
-    logits = model(context.unsqueeze(0), torch.arange(len(context)))
-    probs = F.softmax(logits, dim=-1)[0, -1]
+x = norm(x)
+logits = model.lm_head(x)
 
-    input_pos = torch.tensor([len(context)])
-    next_token = torch.multinomial(probs.squeeze(), 1)
+# logits = model(tokens[:1024].unsqueeze(0).long())
 
-    for i in range(512):
-        # print(enc.decode([next_token]), end="")
-        logits = model(next_token.unsqueeze(0), input_pos)
-        probs = F.softmax(logits, dim=-1)
-        next_token = torch.multinomial(probs.squeeze(), 1)
-        str_context += chr(next_token)
-        input_pos += 1
+# plt.hist(x.flatten().detach().numpy(), 100)
+# plt.show()
+
+plt.imshow(x.squeeze().detach().numpy())
+plt.colorbar()
+plt.show()
