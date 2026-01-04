@@ -6,6 +6,7 @@ import numpy as np
 from model import GPT, GPTConfig, Quantized_Linear, Quantized_Embedding
 import wandb
 from muon import SingleDeviceMuon
+from kron_torch import Kron
 
 def load_tokens():
 	with open('tokenized_enwik9', 'rb') as f:
@@ -60,8 +61,8 @@ wandb.init(
 	"muon_lr": 0.020466009566743288,
 	"wte_lr": 0.18293164620959812,
 	"lm_head_lr": 0.00090932076906,
-	"b_lr": 0.034601962195880175/2,
-	"e_lr": 0.034601962195880175/2,
+	"b_lr": 0.034601962195880175/4,
+	"e_lr": 0.034601962195880175/4,
 	"num_tokens": len(train_loader.tokens)
 	}
 )
@@ -71,7 +72,7 @@ torch.manual_seed(0)
 # wandb.init(project='hutter')
 config = wandb.config
 raw_model = GPT()
-# raw_model.load_state_dict(torch.load('log/wise-feather-2874.pt', weights_only=False)['model'])
+# raw_model.load_state_dict(torch.load('log/pleasant-galaxy-3272.pt', weights_only=False)['model'])
 raw_model = raw_model.to(device)
 model = torch.compile(raw_model)
 
@@ -96,13 +97,15 @@ w_params = [m.weight for m in raw_model.transformer.h.modules() if isinstance(m,
 e_params = [m.e for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))]
 b_params = [m.b for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))]
 optimizer3 = SingleDeviceMuon(w_params, lr=config.muon_lr, momentum=0.95)
+# optimizer4 = torch.optim.Adam([m.bias for m in raw_model.transformer.h.modules() if isinstance(m, torch.nn.Linear)], lr=0.01, betas=(0.9, 0.95), fused=True)
+# optimizer3 = Kron(e_params + b_params, lr=0.001)
 # optimizer4 = torch.optim.Adam(e_params, lr=config.e_lr, betas=(0.9, 0.95), fused=True)
 # optimizer5 = torch.optim.Adam(b_params, lr=config.b_lr, betas=(0.9, 0.95), fused=True)
 optimizers = [optimizer1, optimizer2, optimizer3]
 
-for opt in optimizers:
-	for group in opt.param_groups:
-		group["initial_lr"] = group["lr"]
+# for opt in optimizers:
+# 	for group in opt.param_groups:
+# 		group["initial_lr"] = group["lr"]
 
 # create the log directory we will write checkpoints to and log to
 log_dir = "log"
@@ -158,9 +161,9 @@ for step in range(0, max_steps):
 	e_norm = torch.nn.utils.clip_grad_norm_(e_params, 10000)
 	b_norm = torch.nn.utils.clip_grad_norm_(b_params, 10000)
 	# determine and set the learning rate for this iteration
-	for opt in optimizers:
-		for group in opt.param_groups:
-			group["lr"] = group["initial_lr"] * get_lr(step)
+	# for opt in optimizers:
+	# 	for group in opt.param_groups:
+	# 		group["lr"] = group["initial_lr"] * get_lr(step)
 	# prevent nan
 	with torch.no_grad():
 		for m in raw_model.modules():

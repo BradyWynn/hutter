@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from torch import Tensor
+import matplotlib.pyplot as plt
 
 @dataclass
 class GPTConfig:
@@ -188,7 +189,21 @@ class Attention(nn.Module):
 
         if self.kv_cache is not None:
             k, v = self.kv_cache.update(input_pos, k, v)
-        
+
+        # L, S = q.size(-2), k.size(-2)
+        # scale_factor = 1 / math.sqrt(q.size(-1))
+        # attn_bias = torch.zeros(L, S, dtype=q.dtype, device=q.device)
+        # temp_mask = torch.ones(L, S, dtype=torch.bool).tril(diagonal=0)
+        # attn_bias.masked_fill_(temp_mask.logical_not(), float("-inf"))
+
+        # attn_weight = q @ k.transpose(-2, -1) * scale_factor
+        # attn_weight += attn_bias
+        # # attn_weight = torch.softmax(attn_weight, dim=-1)
+
+        # plt.imshow((attn_weight).squeeze().detach()[0])
+        # plt.colorbar()
+        # plt.show()
+
         y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
         y = y.transpose(1, 2).contiguous().view(bsz, seqlen, self.config.n_embd)
         return self.c_proj(y)
@@ -226,7 +241,7 @@ class GPT(nn.Module):
         for layer in self.transformer.h:
             x = layer(x, input_pos, mask)
 
-        act_norm = torch.mean(x**2).detach()
+        act_norm = (torch.max(x**2)/torch.mean(x**2)).detach()
         x = norm(x)
         logits = self.lm_head(x)
         return logits, act_norm

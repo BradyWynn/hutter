@@ -2,33 +2,50 @@ import torch
 from model import GPT
 import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
+import numpy as np
 
 device = "cuda"
 
 model = GPT()
 
-fig, ax = plt.subplots(figsize=(6.4, 3))
+# fig, ax = plt.subplots(figsize=(6.4, 3))
 
-results = []
+# results = []
 
-cals = list(range(0, 30500, 500))
+# cals = list(range(0, 17500, 500))
 
-# for i in range(0, 30500, 500):
-model.load_state_dict(torch.load('log/wise-feather-2874.pt', weights_only=False)['model'])
+# for i in range(0, 17500, 500):
+# model.load_state_dict(torch.load(f'log/model_{str(i).zfill(5)}.pt', weights_only=False)['model'])
+model.load_state_dict(torch.load('log/model_00000.pt', weights_only=False)['model'])
 
-# qw = model.transformer.h[7].attn.c_proj.qweight()
-# w = (qw.round() - qw).detach() + qw
+layer = model.transformer.h[7].mlp.c_proj
 
-# dw = 2**model.transformer.h[7].attn.c_proj.e * w
+qw = layer.qweight()
+w = (qw.round() - qw).detach() + qw
 
-# u, s, v = torch.linalg.svd(model.transformer.h[0].attn.c_attn.weight)
+dw = 2**layer.e * w
+
+# print(w.shape)
+
+# plt.imshow(w.detach())
+# plt.hist(w.flatten().int().detach(), 100)
+# plt.show()
+
+# print(torch.mean(layer.b))
+# print(w.flatten().shape)
+# print(torch.bincount(w.int().flatten().abs()).tolist())
+
+# print(np.allclose(w.detach().numpy(), w.detach().numpy().astype(np.int8)))
+# np.save("w.npy", w.detach().numpy().astype(np.int16))
+
+# u, s, v = torch.linalg.svd(dw)
 
 # plt.hist(u.detach().cpu().flatten().clip(-0.1, 0.1), 100)
 # plt.show()
 
-plt.imshow(model.transformer.h[0].mlp.c_proj.weight.detach().cpu())
-plt.colorbar()
-plt.show()
+# plt.imshow(model.transformer.h[0].mlp.c_proj.weight.detach().cpu())
+# plt.colorbar()
+# plt.show()
 
 # plt.imshow(u.detach().cpu().clip(-0.1, 0.1))
 # plt.show()
