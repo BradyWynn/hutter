@@ -23,17 +23,20 @@ device = torch.device('cuda')
 #             # print(module._get_weight_tensors())
 #             torch.save(module.quantizers['scaling_fwd'][1](module._get_weight_tensors()[0])._data, f"{os.path.join('model', name)}.pt")
 
-model = torch.load('log/stellar-fire-3273.pt', map_location=torch.device('cpu'), weights_only=False)['model']
-# plt.hist((model['transformer.wte.weight']).flatten(), 100)
-layer = model['transformer.h.7.mlp.c_proj.b']
+model = torch.load('log/model_30000.pt', map_location=torch.device('cpu'), weights_only=False)['model']
+layer = model['transformer.h.3.mlp.c_proj.weight']
 # u, s, v = torch.linalg.svd(layer)
 # plt.plot(s)
-print(torch.mean(layer).item())
-print(layer.shape)
+# print(torch.mean(layer).item())
+# print(layer.shape)
 plt.hist(layer.flatten(), 100)
+print(torch.mean(layer).item())
 # plt.imshow(layer)
 # plt.colorbar()
 plt.show()
+
+# np.save("w.npy", layer.detach().numpy().astype(np.float16))
+
 # plt.hist(model['transformer.wte.weight'].flatten(), 2**8)
 # plt.show()
 # for i in model.keys():

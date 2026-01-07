@@ -16,27 +16,24 @@ model = GPT()
 
 # for i in range(0, 17500, 500):
 # model.load_state_dict(torch.load(f'log/model_{str(i).zfill(5)}.pt', weights_only=False)['model'])
-model.load_state_dict(torch.load('log/model_00000.pt', weights_only=False)['model'])
+model.load_state_dict(torch.load('log/pleasant-galaxy-3272.pt', weights_only=False)['model'])
 
-layer = model.transformer.h[7].mlp.c_proj
+layer = model.transformer.h[3].mlp.c_proj
 
 qw = layer.qweight()
 w = (qw.round() - qw).detach() + qw
 
-dw = 2**layer.e * w
-
-# print(w.shape)
+dw = 2**(layer.e1 @ layer.e2) * w
 
 # plt.imshow(w.detach())
-# plt.hist(w.flatten().int().detach(), 100)
-# plt.show()
+plt.hist(w.flatten().int().detach(), 100)
+plt.show()
 
-# print(torch.mean(layer.b))
-# print(w.flatten().shape)
+print(w.flatten().shape)
 # print(torch.bincount(w.int().flatten().abs()).tolist())
 
 # print(np.allclose(w.detach().numpy(), w.detach().numpy().astype(np.int8)))
-# np.save("w.npy", w.detach().numpy().astype(np.int16))
+np.save("w.npy", w.detach().numpy())
 
 # u, s, v = torch.linalg.svd(dw)
 

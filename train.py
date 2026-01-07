@@ -72,7 +72,7 @@ torch.manual_seed(0)
 # wandb.init(project='hutter')
 config = wandb.config
 raw_model = GPT()
-# raw_model.load_state_dict(torch.load('log/pleasant-galaxy-3272.pt', weights_only=False)['model'])
+# raw_model.load_state_dict(torch.load('log/frosty-cosmos-3314.pt', weights_only=False)['model'])
 raw_model = raw_model.to(device)
 model = torch.compile(raw_model)
 
@@ -94,11 +94,11 @@ def get_lr(step: int):
 optimizer1 = torch.optim.Adam([raw_model.transformer.wte.weight], lr=config.wte_lr, betas=(0.9, 0.95), fused=True)
 optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=config.lm_head_lr, betas=(0.9, 0.95), fused=True)
 w_params = [m.weight for m in raw_model.transformer.h.modules() if isinstance(m, Quantized_Linear)]
-e_params = [m.e for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))]
+e_params = [m.e1 for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))] + [m.e2 for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))]
 b_params = [m.b for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))]
 optimizer3 = SingleDeviceMuon(w_params, lr=config.muon_lr, momentum=0.95)
 # optimizer4 = torch.optim.Adam([m.bias for m in raw_model.transformer.h.modules() if isinstance(m, torch.nn.Linear)], lr=0.01, betas=(0.9, 0.95), fused=True)
-# optimizer3 = Kron(e_params + b_params, lr=0.001)
+# optimizer3 = Kron(w_params + [raw_model.transformer.wte.weight, raw_model.lm_head.weight], lr=0.0005)
 # optimizer4 = torch.optim.Adam(e_params, lr=config.e_lr, betas=(0.9, 0.95), fused=True)
 # optimizer5 = torch.optim.Adam(b_params, lr=config.b_lr, betas=(0.9, 0.95), fused=True)
 optimizers = [optimizer1, optimizer2, optimizer3]
@@ -157,19 +157,13 @@ for step in range(0, max_steps):
 		loss_accum += loss.detach()
 		loss_last_accum += loss_last.detach()
 		loss.backward()
-	weight_norm = torch.nn.utils.clip_grad_norm_(w_params, 10000)
+	weight_norm = torch.nn.utils.clip_grad_norm_(w_params + [raw_model.transformer.wte.weight, raw_model.lm_head.weight], 10000)
 	e_norm = torch.nn.utils.clip_grad_norm_(e_params, 10000)
 	b_norm = torch.nn.utils.clip_grad_norm_(b_params, 10000)
 	# determine and set the learning rate for this iteration
 	# for opt in optimizers:
 	# 	for group in opt.param_groups:
 	# 		group["lr"] = group["initial_lr"] * get_lr(step)
-	# prevent nan
-	with torch.no_grad():
-		for m in raw_model.modules():
-			if isinstance(m, (Quantized_Linear, Quantized_Embedding)):
-				m.e.clamp_(-16.0, 16.0)
-				m.b.clamp_(0, 16.0)
 
 	for opt in optimizers:
 		opt.step()
@@ -181,7 +175,7 @@ for step in range(0, max_steps):
 	seq_per_sec = seq_processed / dt
 	print(f"step {step:5d} | loss: {loss_accum.item():.6f} | lr {get_lr(step):.4e} | dt: {dt*1000:.2f}ms | seq/sec: {seq_per_sec:.2f}")
 
-	es = torch.cat([m.e.detach().float().view(-1) for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))])
+	es = torch.cat([m.e1.detach().float().view(-1) for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))])
 	bs = torch.cat([m.b.detach().float().view(-1) for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))])
 
 	wandb.log({
