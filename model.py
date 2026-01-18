@@ -13,16 +13,16 @@ import matplotlib.pyplot as plt
 class GPTConfig:
     context_length: int = 1024
     vocab_size: int = 5264
-    n_layer: int = 8
-    n_head: int = 8
-    n_embd: int = 512
+    n_layer: int = 12
+    n_head: int = 12
+    n_embd: int = 768
 
     @property
     def head_n_embd(self):
         return self.n_embd // self.n_head
 
 def norm(x):
-    return F.rms_norm(x, (x.size(-1),))
+    return F.rms_norm(x + 1e-2, (x.size(-1),))
 
 def find_multiple(n: int, k: int) -> int:
     if n % k == 0:
@@ -85,24 +85,19 @@ class Quantized_Linear(nn.Module):
         self.in_features = in_features
         self.out_features = out_features
         self.weight = nn.Parameter(torch.empty((out_features, in_features), **factory_kwargs))
-        self.e1 = nn.Parameter(torch.ones((out_features, 1), **factory_kwargs) * -8)
-        self.e2 = nn.Parameter(torch.ones((1, in_features), **factory_kwargs))
-        self.b = nn.Parameter(torch.ones((out_features, in_features), **factory_kwargs) * 16.)
+        self.z = nn.Parameter(torch.ones((out_features, in_features), **factory_kwargs))
         self.reset_parameters()
     
     def qbits(self):
-        return self.b.clip(0, 16).sum()
-    
-    def qweight(self):
-        return torch.min(torch.max(2**-(self.e1 @ self.e2).clip(-8, 8) * self.weight, -2**(self.b.clip(0, 16)-1)), 2**(self.b.clip(0, 16)-1) - 1)
+        return self.z.sum()
 
     def reset_parameters(self) -> None:
         nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
 
     def forward(self, x: Tensor) -> Tensor:
-        qw = self.qweight()
-        w = (qw.round() - qw).detach() + qw  # straight through estimator
-        return F.linear(x, 2**(self.e1 @ self.e2).clip(-8, 8) * w)
+        bit_mask = self.z.clip(0, 1)
+        w = self.weight * ((bit_mask.round() - bit_mask).detach() + bit_mask)  # straight through estimator
+        return F.linear(x, w)
     
 class Quantized_Embedding(nn.Module):
     def __init__(
@@ -117,27 +112,19 @@ class Quantized_Embedding(nn.Module):
         self.num_embeddings = num_embeddings
         self.embedding_dim = embedding_dim
         self.weight = nn.Parameter(torch.empty((num_embeddings, embedding_dim), **factory_kwargs))
-        self.e1 = nn.Parameter(torch.ones((num_embeddings, 1), **factory_kwargs) * -8)
-        self.e2 = nn.Parameter(torch.ones((1, embedding_dim), **factory_kwargs))
-        self.b = nn.Parameter(torch.ones((num_embeddings, embedding_dim), **factory_kwargs) * 16.)
+        self.z = nn.Parameter(torch.ones((num_embeddings, embedding_dim), **factory_kwargs))
         self.reset_parameters()
 
     def qbits(self):
-        return self.b.clip(0, 16).sum()
-    
-    def qweight(self):
-        return torch.min(torch.max(2**-(self.e1 @ self.e2).clip(-8, 8) * self.weight, -2**(self.b.clip(0, 16)-1)), 2**(self.b.clip(0, 16)-1) - 1)
+        return self.z.sum()
     
     def reset_parameters(self) -> None:
         nn.init.normal_(self.weight)
     
     def forward(self, input: Tensor) -> Tensor:
-        qw = self.qweight()
-        w = (qw.round() - qw).detach() + qw  # straight through estimator
-        return F.embedding(
-            input,
-            2**(self.e1 @ self.e2).clip(-8, 8) * w,
-        )
+        bit_mask = self.z.clip(0, 1)
+        w = self.weight * ((bit_mask.round() - bit_mask).detach() + bit_mask)  # straight through estimator
+        return F.embedding(input, w)
 
 class FeedForward(nn.Module):
     def __init__(self, config: GPTConfig) -> None:
@@ -200,9 +187,9 @@ class Attention(nn.Module):
 
         # attn_weight = q @ k.transpose(-2, -1) * scale_factor
         # attn_weight += attn_bias
-        # # attn_weight = torch.softmax(attn_weight, dim=-1)
+        # attn_weight = torch.softmax(attn_weight, dim=-1)
 
-        # plt.imshow((attn_weight).squeeze().detach()[0])
+        # plt.imshow((attn_weight).squeeze().detach()[1], aspect='auto')
         # plt.colorbar()
         # plt.show()
 
