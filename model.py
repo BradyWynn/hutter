@@ -86,17 +86,28 @@ class Quantized_Linear(nn.Module):
         self.out_features = out_features
         self.weight = nn.Parameter(torch.empty((out_features, in_features), **factory_kwargs))
         self.z = nn.Parameter(torch.ones((out_features, in_features), **factory_kwargs))
+        self.e = nn.Parameter(torch.ones((out_features, 1), **factory_kwargs) * -8)
+        self.b = nn.Parameter(torch.ones((out_features, 1), **factory_kwargs) * 16.)
         self.reset_parameters()
-    
+
     def qbits(self):
         return self.z.sum()
+    
+    def get_bits(self):
+        return torch.masked_select(self.b.expand_as(self.weight), self.z.round().bool()).sum()
+    
+    def qweight(self):
+        return torch.min(torch.max(2**-self.e.clip(-8, 8) * self.weight, -2**(self.b.clip(0, 16)-1)), 2**(self.b.clip(0, 16)-1) - 1)
 
     def reset_parameters(self) -> None:
         nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
 
     def forward(self, x: Tensor) -> Tensor:
+        qw = self.qweight()
+        w = (qw.round() - qw).detach() + qw  # straight through estimator
+        w = 2**self.e.clip(-8, 8) * w
         bit_mask = self.z.clip(0, 1)
-        w = self.weight * ((bit_mask.round() - bit_mask).detach() + bit_mask)  # straight through estimator
+        w = w * ((bit_mask.round() - bit_mask).detach() + bit_mask)  # straight through estimator
         return F.linear(x, w)
     
 class Quantized_Embedding(nn.Module):
@@ -113,17 +124,28 @@ class Quantized_Embedding(nn.Module):
         self.embedding_dim = embedding_dim
         self.weight = nn.Parameter(torch.empty((num_embeddings, embedding_dim), **factory_kwargs))
         self.z = nn.Parameter(torch.ones((num_embeddings, embedding_dim), **factory_kwargs))
+        self.e = nn.Parameter(torch.ones((num_embeddings, 1), **factory_kwargs) * -8)
+        self.b = nn.Parameter(torch.ones((num_embeddings, 1), **factory_kwargs) * 16.)
         self.reset_parameters()
 
     def qbits(self):
         return self.z.sum()
+
+    def get_bits(self):
+        return torch.masked_select(self.b.expand_as(self.weight), self.z.round().bool()).sum()
+    
+    def qweight(self):
+        return torch.min(torch.max(2**-self.e.clip(-8, 8) * self.weight, -2**(self.b.clip(0, 16)-1)), 2**(self.b.clip(0, 16)-1) - 1)
     
     def reset_parameters(self) -> None:
         nn.init.normal_(self.weight)
     
     def forward(self, input: Tensor) -> Tensor:
+        qw = self.qweight()
+        w = (qw.round() - qw).detach() + qw  # straight through estimator
+        w = 2**self.e.clip(-8, 8) * w
         bit_mask = self.z.clip(0, 1)
-        w = self.weight * ((bit_mask.round() - bit_mask).detach() + bit_mask)  # straight through estimator
+        w = w * ((bit_mask.round() - bit_mask).detach() + bit_mask)  # straight through estimator
         return F.embedding(input, w)
 
 class FeedForward(nn.Module):

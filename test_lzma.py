@@ -19,7 +19,7 @@ for file in os.listdir("model"):
         b = lzma.compress(np.packbits(z.numpy().astype(np.bool)))
         a = lzma.compress(wz.numpy().astype(np.float16))
         c = lzma.compress((w*z.round()).numpy().astype(np.float16))
-        # print(len(a) + len(b), len(c), file)
+        print(len(a) + len(b), len(c), file)
         sum_list.append(len(a) + len(b))
 print(sum(sum_list))
 

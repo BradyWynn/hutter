@@ -63,6 +63,7 @@ wandb.init(
 	"lm_head_lr": 0.00181864153812,
 	"b_lr": 0.034601962195880175/4,
 	"e_lr": 0.034601962195880175/4,
+	"sparsity_lr": 0.0005,
 	"num_tokens": len(train_loader.tokens)
 	}
 )
@@ -72,7 +73,7 @@ torch.manual_seed(0)
 # wandb.init(project='hutter')
 config = wandb.config
 raw_model = GPT()
-raw_model.load_state_dict(torch.load('log/sparkling-serenity-3529.pt', weights_only=False)['model'])
+# raw_model.load_state_dict(torch.load('log/swift-firefly-3734.pt', weights_only=False)['model'])
 raw_model = raw_model.to(device)
 model = torch.compile(raw_model)
 
@@ -97,15 +98,15 @@ optimizer1 = torch.optim.Adam([raw_model.transformer.wte.weight], lr=config.wte_
 optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=config.lm_head_lr, betas=(0.9, 0.95), fused=True)
 w_params = [m.weight for m in raw_model.transformer.h.modules() if isinstance(m, Quantized_Linear)]
 z_params = [m.z for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))]
-# e_params = [m.e1 for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))]
-# b_params = [m.b1 for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))]
+# e_params = [m.e for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))]
+# b_params = [m.b for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))]
 optimizer3 = SingleDeviceMuon(w_params, lr=config.muon_lr, momentum=0.95)
 # optimizer3 = torch.optim.Adam(w_params, lr=config.muon_lr, betas=(0.9, 0.95), fused=True)
 # optimizer3 = Kron(w_params, lr=0.000762020871013)
 # optimizer4 = torch.optim.Adam(e_params, lr=config.e_lr, betas=(0.9, 0.95), fused=True)
 # optimizer5 = torch.optim.Adam(b_params, lr=config.b_lr, betas=(0.9, 0.95), fused=True)
-# optimizer6 = torch.optim.Adam(z_params, lr=0.001, betas=(0.9, 0.95), fused=True)
-optimizers = [optimizer1, optimizer2, optimizer3]
+optimizer6 = torch.optim.Adam(z_params, lr=config.sparsity_lr, betas=(0.9, 0.95), fused=True)
+optimizers = [optimizer1, optimizer2, optimizer3, optimizer6]
 
 for opt in optimizers:
 	for group in opt.param_groups:
@@ -138,6 +139,8 @@ for step in range(0, max_steps):
 	ce_loss_accum = 0.0
 	q_loss_accum = 0.0
 	act_norm_accum = 0.0
+	# weight_count = sum([m.z.sum().item() for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))])
+	weight_count_rounded = sum([m.z.round().sum().item() for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))])
 	for micro_step in range(grad_accum_steps):
 		x, y = train_loader.next_batch()
 		x, y = x.to(device), y.to(device)
@@ -148,10 +151,9 @@ for step in range(0, max_steps):
 		loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), y.flatten(), ignore_index=-1)
 		ce_loss = loss.detach()
 		Q = torch.stack([m.qbits() for m in model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))]).sum()
-		Q = Q / weight_count
 		# loss = (len(train_loader.tokens) * loss * np.log2(np.e) + weight_count * Q)/(8*10**8)
 		loss_last = F.cross_entropy(logits[:, -1, :].reshape(-1, logits.size(-1)), y[:, -1].view(-1), ignore_index=-1)
-		loss = (len(train_loader.tokens) * loss * np.log2(np.e) + weight_count * Q * 16)/(8*10**8)
+		loss = (len(train_loader.tokens) * loss * np.log2(np.e) + Q * 16)/(8*10**8)
 		loss = loss / grad_accum_steps
 		ce_loss = ce_loss / grad_accum_steps
 		Q = Q / grad_accum_steps
@@ -164,8 +166,6 @@ for step in range(0, max_steps):
 		loss.backward()
 	torch.nn.utils.clip_grad_norm_(raw_model.parameters(), 1)
 	weight_norm = torch.nn.utils.clip_grad_norm_(w_params + [raw_model.transformer.wte.weight, raw_model.lm_head.weight], 1)
-	# e_norm = torch.nn.utils.clip_grad_norm_(e_params, 1)
-	# b_norm = torch.nn.utils.clip_grad_norm_(b_params, 1)
 	# determine and set the learning rate for this iteration
 	# for opt in optimizers:
 	# 	for group in opt.param_groups:
@@ -175,12 +175,16 @@ for step in range(0, max_steps):
 		for m in raw_model.modules():
 			if isinstance(m, (Quantized_Linear, Quantized_Embedding)):
 				m.z.clamp_(0, 1)
+				m.e.clamp(-8, 8)
+				m.b.clamp(0, 16)
 	for opt in optimizers:
 		opt.step()
 	with torch.no_grad():
 		for m in raw_model.modules():
 			if isinstance(m, (Quantized_Linear, Quantized_Embedding)):
 				m.z.clamp_(0, 1)
+				m.e.clamp(-8, 8)
+				m.b.clamp(0, 16)
 	torch.cuda.synchronize() # wait for the GPU to finish work
 	t1 = time.time()
 	dt = t1 - t0 # time difference in seconds
@@ -188,17 +192,14 @@ for step in range(0, max_steps):
 	seq_per_sec = seq_processed / dt
 	print(f"step {step:5d} | loss: {loss_accum.item():.6f} | lr {get_lr(step):.4e} | dt: {dt*1000:.2f}ms | seq/sec: {seq_per_sec:.2f}")
 
-	# es = torch.cat([m.e1.detach().float().view(-1) for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))])
-	# bs = torch.cat([m.b1.detach().float().view(-1) for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))])
-
 	wandb.log({
 		"loss": ce_loss_accum.item(),
-		"bytes": (len(train_loader.tokens) * ce_loss_accum.item() * np.log2(np.e) + weight_count * q_loss_accum * 16)/8, 
+		"bytes": (len(train_loader.tokens) * ce_loss_accum.item() * np.log2(np.e) + q_loss_accum * 16)/8, 
 		"bits_per_weight": q_loss_accum,
 		"lr": get_lr(step),
 		"weight_norm": weight_norm,
 		"last_loss": loss_last_accum.item(),
-		"params": weight_count * q_loss_accum,
+		"params": weight_count_rounded,
 		'step': step,
 		'act_norm': act_norm_accum
 		})
@@ -213,8 +214,6 @@ for step in range(0, max_steps):
 # 		'muon_lr': {'distribution': 'uniform', 'min': 0.01, 'max': 0.1},
 # 		'wte_lr': {'distribution': 'uniform', 'min': 0.01, 'max': 0.8},
 # 		'lm_head_lr': {'distribution': 'uniform', 'min': 0.001, 'max': 0.1},
-# 		# 'b_lr': {'distribution': 'uniform', 'min': 0.001, 'max': 0.2},
-# 		# 'e_lr': {'distribution': 'uniform', 'min': 0.001, 'max': 0.1},
 # 	}
 #     }
 

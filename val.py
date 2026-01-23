@@ -8,7 +8,7 @@ from tqdm import tqdm
 device = torch.device('cuda')
 
 model = GPT()
-model.load_state_dict(torch.load('log/sparkling-serenity-3529.pt', weights_only=False)['model'])
+model.load_state_dict(torch.load('log/model_12000.pt', weights_only=False)['model'])
 model.to(device)
 
 with open('tokenized_enwik9', 'rb') as f:
