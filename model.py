@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 @dataclass
 class GPTConfig:
     context_length: int = 1024
-    vocab_size: int = 5264
+    vocab_size: int = 30256
     n_layer: int = 12
     n_head: int = 12
     n_embd: int = 768
@@ -86,29 +86,29 @@ class Quantized_Linear(nn.Module):
         self.out_features = out_features
         self.weight = nn.Parameter(torch.empty((out_features, in_features), **factory_kwargs))
         self.z = nn.Parameter(torch.ones((out_features, in_features), **factory_kwargs))
-        self.e = nn.Parameter(torch.ones((out_features, 1), **factory_kwargs) * -8)
-        self.b = nn.Parameter(torch.ones((out_features, 1), **factory_kwargs) * 16.)
+        # self.e = nn.Parameter(torch.ones((out_features, 1), **factory_kwargs) * -6)
+        # self.b = nn.Parameter(torch.ones((out_features, 1), **factory_kwargs) * 8.)
         self.reset_parameters()
 
     def qbits(self):
         return self.z.sum()
     
-    def get_bits(self):
-        return torch.masked_select(self.b.expand_as(self.weight), self.z.round().bool()).sum()
+    # def get_bits(self):
+    #     return self.z.flatten().nonzero().shape[0]
+    #     return torch.masked_select(self.b.expand_as(self.weight), self.z.round().bool()).sum()
     
-    def qweight(self):
-        return torch.min(torch.max(2**-self.e.clip(-8, 8) * self.weight, -2**(self.b.clip(0, 16)-1)), 2**(self.b.clip(0, 16)-1) - 1)
+    # def qweight(self):
+    #     return torch.min(torch.max(2**-self.e.clip(-8, 8) * self.weight, -2**(self.b.clip(0, 16)-1)), 2**(self.b.clip(0, 16)-1) - 1)
 
     def reset_parameters(self) -> None:
         nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
 
     def forward(self, x: Tensor) -> Tensor:
-        qw = self.qweight()
-        w = (qw.round() - qw).detach() + qw  # straight through estimator
-        w = 2**self.e.clip(-8, 8) * w
-        bit_mask = self.z.clip(0, 1)
-        w = w * ((bit_mask.round() - bit_mask).detach() + bit_mask)  # straight through estimator
-        return F.linear(x, w)
+        # qw = self.qweight()
+        # w = (qw.round() - qw).detach() + qw  # straight through estimator
+        # w = 2**self.e.clip(-8, 8) * w
+        mask = (self.z.round() - self.z).detach() + self.z
+        return F.linear(x, self.weight * mask.clip(0, 1))
     
 class Quantized_Embedding(nn.Module):
     def __init__(
@@ -124,35 +124,37 @@ class Quantized_Embedding(nn.Module):
         self.embedding_dim = embedding_dim
         self.weight = nn.Parameter(torch.empty((num_embeddings, embedding_dim), **factory_kwargs))
         self.z = nn.Parameter(torch.ones((num_embeddings, embedding_dim), **factory_kwargs))
-        self.e = nn.Parameter(torch.ones((num_embeddings, 1), **factory_kwargs) * -8)
-        self.b = nn.Parameter(torch.ones((num_embeddings, 1), **factory_kwargs) * 16.)
+        # self.e = nn.Parameter(torch.ones((num_embeddings, 1), **factory_kwargs) * -6)
+        # self.b = nn.Parameter(torch.ones((num_embeddings, 1), **factory_kwargs) * 8.)
         self.reset_parameters()
 
     def qbits(self):
         return self.z.sum()
 
-    def get_bits(self):
-        return torch.masked_select(self.b.expand_as(self.weight), self.z.round().bool()).sum()
+    # def get_bits(self):
+    #     return self.z.flatten().nonzero().shape[0]
+        # return torch.masked_select(self.b.expand_as(self.weight), self.z.round().bool()).sum()
     
-    def qweight(self):
-        return torch.min(torch.max(2**-self.e.clip(-8, 8) * self.weight, -2**(self.b.clip(0, 16)-1)), 2**(self.b.clip(0, 16)-1) - 1)
+    # def qweight(self):
+    #     return torch.min(torch.max(2**-self.e.clip(-8, 8) * self.weight, -2**(self.b.clip(0, 16)-1)), 2**(self.b.clip(0, 16)-1) - 1)
     
     def reset_parameters(self) -> None:
         nn.init.normal_(self.weight)
-    
+
     def forward(self, input: Tensor) -> Tensor:
-        qw = self.qweight()
-        w = (qw.round() - qw).detach() + qw  # straight through estimator
-        w = 2**self.e.clip(-8, 8) * w
-        bit_mask = self.z.clip(0, 1)
-        w = w * ((bit_mask.round() - bit_mask).detach() + bit_mask)  # straight through estimator
-        return F.embedding(input, w)
+        # qw = self.qweight()
+        # w = (qw.round() - qw).detach() + qw  # straight through estimator
+        # w = 2**self.e.clip(-8, 8) * w
+        # bit_mask = self.z.clip(0, 1)
+        # w = self.weight * bit_mask
+        mask = (self.z.round() - self.z).detach() + self.z
+        return F.embedding(input, self.weight * mask.clip(0, 1))
 
 class FeedForward(nn.Module):
     def __init__(self, config: GPTConfig) -> None:
         super().__init__()
-        self.c_fc = Quantized_Linear(config.n_embd, 4*config.n_embd)
-        self.c_proj = Quantized_Linear(4*config.n_embd, config.n_embd)
+        self.c_fc = nn.Linear(config.n_embd, 4*config.n_embd)
+        self.c_proj = nn.Linear(4*config.n_embd, config.n_embd)
         self.c_proj.weight.data.zero_()
 
     def forward(self, x: Tensor) -> Tensor:
@@ -176,8 +178,8 @@ class Attention(nn.Module):
         assert config.n_embd % config.n_head == 0
         self.config = config
         # key, query, value projections for all heads, but in a batch
-        self.c_attn = Quantized_Linear(config.n_embd, 3*config.n_embd)
-        self.c_proj = Quantized_Linear(config.n_embd, config.n_embd)
+        self.c_attn = nn.Linear(config.n_embd, 3*config.n_embd)
+        self.c_proj = nn.Linear(config.n_embd, config.n_embd)
         self.rotary = Rotary(config.head_n_embd)
         self.c_proj.weight.data.zero_()
         self.kv_cache = None
@@ -225,14 +227,43 @@ class GPT(nn.Module):
         self.config = config
 
         transformer = {
-        'wte' : Quantized_Embedding(config.vocab_size, config.n_embd),
+        'wte' : nn.Embedding(config.vocab_size, config.n_embd),
         'h'   : nn.ModuleList(TransformerBlock(config) for _ in range(config.n_layer)),
         }
 
         self.transformer = nn.ModuleDict(transformer)
-        self.lm_head = Quantized_Linear(config.n_embd, config.vocab_size)
+        self.lm_head = nn.Linear(config.n_embd, config.vocab_size)
         # self.transformer.wte.weight = self.lm_head.weight
         self.lm_head.weight.data.zero_()
+
+    def load_weights(self, checkpoint_path, device="cpu"):
+        state = torch.load(checkpoint_path, weights_only=False, map_location=device)['model']
+
+        model_state = self.state_dict()
+
+        for name, module in self.named_modules():
+            if isinstance(module, (Quantized_Linear, Quantized_Embedding)):
+                weight_key = f"{name}.weight"
+                if weight_key in state and weight_key in model_state:
+                    if state[weight_key].shape == model_state[weight_key].shape:
+                        model_state[weight_key].copy_(state[weight_key])
+
+        self.load_state_dict(model_state)
+
+    def load_masks(self, checkpoint_path, device="cpu"):
+        state = torch.load(checkpoint_path, weights_only=False, map_location=device)['model']
+
+        model_state = self.state_dict()
+
+        for name, module in self.named_modules():
+            if isinstance(module, (Quantized_Linear, Quantized_Embedding)):
+                mask_key = f"{name}.z"
+                if mask_key in state and mask_key in model_state:
+                    if state[mask_key].shape == model_state[mask_key].shape:
+                        model_state[mask_key].copy_(state[mask_key])
+
+        self.load_state_dict(model_state)
+
 
     def setup_caches(self, max_batch_size, max_seq_length):
         max_seq_length = find_multiple(max_seq_length, 8)

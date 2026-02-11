@@ -2,8 +2,6 @@
 #include <stdlib.h>
 #include <math.h>
 
-#define TABLE_SIZE 2000000
-
 FILE* data;
 FILE* file;
 
@@ -33,7 +31,7 @@ int replace_and_compact(short* arr, int size, Bigram bigram, int new_token){
 int main(){
 	int arr_size = pow(10, 9);
 
-    int num_tokens = 5000;
+    int num_tokens = 30000;
 
 	char dir[] = "enwik9";
 	char out[] = "tokenized_enwik9";
@@ -64,7 +62,7 @@ int main(){
         Bigram bigram = {first[i], second[i]};
         int removed = replace_and_compact(int16_arr, arr_size, bigram, 256 + i);
         arr_size -= removed;
-        printf("%f%% | %d | %d\n", (float)i/num_tokens * 100, i, arr_size);
+        printf("%f%% | %d | %d\n", (float)i/num_tokens * 100, 1+i, arr_size);
     }
     
 	file = fopen(out, "wb");

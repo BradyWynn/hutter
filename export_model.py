@@ -2,9 +2,8 @@ import os
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-from transformer_engine.common.recipe import Format, DelayedScaling, MXFP8BlockScaling, NVFP4BlockScaling
-import transformer_engine.pytorch as te
 from model import GPT
+import lzma
 
 device = torch.device('cuda')
 
@@ -23,12 +22,47 @@ device = torch.device('cuda')
 #             # print(module._get_weight_tensors())
 #             torch.save(module.quantizers['scaling_fwd'][1](module._get_weight_tensors()[0])._data, f"{os.path.join('model', name)}.pt")
 
-model = torch.load('log/model_12000.pt', map_location=torch.device('cpu'), weights_only=False)['model']
-# layer = model['transformer.h.0.attn.c_proj.weight']
-# mask = model['transformer.h.0.attn.c_proj.z']
-# print(torch.mean(mask.round()).item())
-# plt.hist(torch.masked_select(layer.flatten(), mask.round().flatten().bool()), 200)
-# plt.imshow(torch.log(layer*mask.round()), interpolation='none')
+model = torch.load('log/model_08000.pt', map_location=torch.device('cpu'), weights_only=False)['model']
+weight = model['lm_head.weight']
+# mask = model['transformer.h.0.attn.c_attn.z']
+
+plt.imshow(weight, interpolation='none', aspect='auto')
+plt.colorbar()
+plt.show()
+
+# print(torch.mean(weight**2))
+
+# plt.hist(weight.flatten(), 100)
+# plt.show()
+
+# print(mask.flatten().nonzero().shape[0])
+# print(mask.flatten().nonzero().shape)
+# z = (mask < 0.0056157955)
+# mask[z] = 0.0
+# print(mask.flatten().nonzero().shape)
+# plt.imshow(mask, interpolation='none')
+# plt.show()
+
+# bit_mask = mask.clip(0, 1)
+# _, idx = torch.topk(bit_mask.flatten(), int(bit_mask.shape.numel()*0.9), dim=-1, largest=False)
+# mask = torch.ones_like(bit_mask.flatten())
+# mask.scatter_(-1, idx, 0.0)
+# mask = mask.view_as(bit_mask)
+# w = weight * bit_mask * mask
+# a = lzma.compress(w.numpy())
+# b = lzma.compress(weight.numpy())
+# print(weight.shape)
+# print(len(a))
+# print(len(b))
+
+# a = []
+# for m in [i for i in list(model.keys()) if i[-1:] == "z"]:
+#     a.append(model[m].flatten())
+# a = torch.cat(a)
+# print(np.quantile(a.numpy(), q=0.5))
+# plt.hist(a, 200, log=True)
+# plt.show()
+# plt.imshow(mask, interpolation='none')
 # plt.colorbar()
 # plt.show()
 
@@ -39,6 +73,6 @@ model = torch.load('log/model_12000.pt', map_location=torch.device('cpu'), weigh
 
 # plt.hist(model['transformer.wte.weight'].flatten(), 2**8)
 # plt.show()
-for i in model.keys():
-    print(model[i].dtype, i)
-    torch.save(model[i], f"{os.path.join('model', i)}.pt")
+# for i in model.keys():
+#     print(model[i].dtype, i)
+#     torch.save(model[i], f"{os.path.join('model', i)}.pt")

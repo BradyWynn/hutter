@@ -11,16 +11,24 @@ for file in os.listdir("model"):
     if "weight" in file:
         w = torch.load(os.path.join("model", file))
         z = torch.load(os.path.join("model", f"{file[:-9]}z.pt"))
+        e = torch.load(os.path.join("model", f"{file[:-9]}e.pt"))
+        b = torch.load(os.path.join("model", f"{file[:-9]}b.pt"))
+
+        qw = torch.min(torch.max(2**-e.clip(-8, 8) * w, -2**(b.clip(0, 16)-1)), 2**(b.clip(0, 16)-1) - 1)
+        w = (qw.round() - qw).detach() + qw
+        # w = 2**e.clip(-8, 8) * w
 
         # print(w.shape, z.shape)
-
+        
         wz = torch.masked_select(w.flatten(), z.round().flatten().bool())
 
-        b = lzma.compress(np.packbits(z.numpy().astype(np.bool)))
-        a = lzma.compress(wz.numpy().astype(np.float16))
-        c = lzma.compress((w*z.round()).numpy().astype(np.float16))
-        print(len(a) + len(b), len(c), file)
-        sum_list.append(len(a) + len(b))
+        # print(torch.allclose(wz.float(), wz.to(torch.int16).float()))
+
+        # a = lzma.compress(wz.numpy().astype(np.int16))
+        b = lzma.compress(np.packbits(z.round().numpy().astype(np.bool)))
+        # c = lzma.compress((w*z.round()).numpy().astype(np.int16))
+        # print(len(a) + len(b), len(c), file)
+        sum_list.append(len(b))
 print(sum(sum_list))
 
 # wz = w * z.round()

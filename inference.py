@@ -9,7 +9,7 @@ def norm(x):
     return F.rms_norm(x, (x.size(-1),))
 
 model = GPT()
-model.load_state_dict(torch.load('log/sparkling-serenity-3529.pt', weights_only=False)['model'])
+model.load_state_dict(torch.load('log/model_08000.pt', weights_only=False)['model'])
 
 with open('tokenized_enwik9', 'rb') as f:
     data = f.read()
@@ -22,15 +22,15 @@ x = tokens[i:i+1024].unsqueeze(0).long()
 
 x = model.transformer.wte(x)
 
-# mask = None
-# input_pos = None
+mask = None
+input_pos = None
 
-# for layer in model.transformer.h:
-#     x = layer(x, input_pos, mask)
+for layer in model.transformer.h[:6]:
+    x = layer(x, input_pos, mask)
 
 # x = model.lm_head(x)
 
-plt.imshow(x.squeeze().detach().numpy())
-plt.colorbar()
-# plt.hist(x.flatten().detach().numpy(), 100)
+# plt.imshow(x.squeeze().detach().numpy())
+# plt.colorbar()
+plt.hist(x.flatten().detach().numpy(), 100)
 plt.show()
