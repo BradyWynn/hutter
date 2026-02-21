@@ -6,7 +6,7 @@ import numpy as np
 from model import GPT, GPTConfig, Quantized_Linear, Quantized_Embedding
 import wandb
 from muon import SingleDeviceMuon
-from kron_torch import Kron
+import lzma
 
 def load_tokens():
 	with open('tokenized_enwik9', 'rb') as f:
@@ -60,9 +60,9 @@ wandb.init(
 	"B": B,
 	"muon_lr": 0.020466009566743288,
 	"wte_lr": 0.18293164620959812,
-	"lm_head_lr": 0.00181864153812,
-	# "b_lr": 0.034601962195880175/4,
-	# "e_lr": 0.034601962195880175,
+	"lm_head_lr": 0.00545592461436,
+	# "b_lr": 0.034601962195880175/2,
+	# "e_lr": 0.034601962195880175/2,
 	# "sparsity_lr": 0.0005,
 	"num_tokens": len(train_loader.tokens)
 	}
@@ -74,8 +74,8 @@ torch.manual_seed(0)
 config = wandb.config
 raw_model = GPT()
 # raw_model.load_masks('log/prime-microwave-4201.pt')
-# raw_model.load_weights('log/gallant-sea-4194.pt')
-# raw_model.load_state_dict(torch.load('log/prime-microwave-4201.pt', weights_only=False)['model'])
+# raw_model.load_weights('log/stoic-gorge-4043.pt')
+# raw_model.load_state_dict(torch.load('log/snowy-wildflower-4414.pt', weights_only=False)['model'])
 raw_model = raw_model.to(device)
 model = torch.compile(raw_model)
 
@@ -111,7 +111,7 @@ w_params = [m.weight for m in raw_model.transformer.h.modules() if isinstance(m,
 # z_params = [m.z for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))]
 # e_params = [m.e for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))]
 # b_params = [m.b for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))]
-optimizer3 = SingleDeviceMuon(w_params, lr=config.muon_lr, momentum=0.95, weight_decay=0.1)
+optimizer3 = SingleDeviceMuon(w_params, lr=config.muon_lr, momentum=0.95)
 # optimizer3 = torch.optim.Adam(w_params, lr=config.muon_lr, betas=(0.9, 0.95), fused=True)
 # optimizer3 = Kron(w_params, lr=0.000762020871013)
 # optimizer4 = torch.optim.Adam(e_params, lr=config.e_lr, betas=(0.9, 0.95), fused=True)
@@ -142,6 +142,12 @@ for step in range(0, max_steps):
 		# you might also want to add optimizer.state_dict() and
 		# rng seeds etc., if you wanted to more exactly resume training
 		torch.save(checkpoint, checkpoint_path)
+		total_bits = 0
+		for m in raw_model.modules():
+			if isinstance(m, (torch.nn.Linear, torch.nn.Embedding)):
+				bits = lzma.compress(m.weight.cpu().detach().numpy())
+				total_bits += len(bits)
+		wandb.log({'lzma_bits': total_bits})
 
 	# do one step of the optimization
 	model.zero_grad(set_to_none=True)
@@ -162,8 +168,9 @@ for step in range(0, max_steps):
 		ce_loss = loss.detach()
 		# Q = torch.stack([m.qbits() for m in model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))]).sum()
 		# bits = sum([m.get_bits() for m in model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))])
+		l1 = sum([torch.sum(torch.log((m.weight.abs() + 0.1)/0.1)) for m in model.modules() if isinstance(m, (torch.nn.Linear, torch.nn.Embedding))])
 		loss_last = F.cross_entropy(logits[:, -1, :].reshape(-1, logits.size(-1)), y[:, -1].view(-1), ignore_index=-1)
-		# loss = (len(train_loader.tokens) * loss * np.log2(np.e) + Q * 16)/(8*10**8)
+		loss = (len(train_loader.tokens) * loss * np.log2(np.e) + l1)/(8*10**8)
 		loss = loss / grad_accum_steps
 		ce_loss = ce_loss / grad_accum_steps
 		# Q = Q / grad_accum_steps
@@ -202,7 +209,7 @@ for step in range(0, max_steps):
 		# z_layers = torch.cat([m.z.flatten() for m in model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))])
 		# z_quantile = np.quantile(z_layers.cpu().numpy(), 1-get_frac0(step))
 		# for m in raw_model.modules():
-		# 	if isinstance(m, (Quantized_Linear, Quantized_Embedding)):
+			# if isinstance(m, (Quantized_Linear, Quantized_Embedding)):
 		# 		m.z.clamp_(0, 1)
 		# 		_, idx = torch.topk(m.z.flatten(), int(m.z.shape.numel()*(1-get_frac0(step))), dim=-1, largest=False)
 		# 		mask = torch.zeros_like(m.z.flatten())
@@ -222,7 +229,7 @@ for step in range(0, max_steps):
 
 	wandb.log({
 		"loss": ce_loss_accum.item(),
-		"bytes": (len(train_loader.tokens) * ce_loss_accum.item() * np.log2(np.e))/8, 
+		# "bytes": (len(train_loader.tokens) * ce_loss_accum.item() * np.log2(np.e) + bits_accum)/8, 
 		# "bits_per_weight": bits/weight_count_rounded,
 		"lr": get_lr(step),
 		"weight_norm": weight_norm,
@@ -231,7 +238,9 @@ for step in range(0, max_steps):
 		# "params_unrounded": q_loss_accum,
 		'step': step,
 		'act_norm': act_norm_accum,
+		# 'model_bytes': bits_accum/8,
 		# "real_params": bits_accum,
+		'dt': dt*1000,
 		})
 
 # sweep_config = {

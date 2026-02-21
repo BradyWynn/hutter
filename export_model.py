@@ -1,4 +1,5 @@
 import os
+import math
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -22,13 +23,18 @@ device = torch.device('cuda')
 #             # print(module._get_weight_tensors())
 #             torch.save(module.quantizers['scaling_fwd'][1](module._get_weight_tensors()[0])._data, f"{os.path.join('model', name)}.pt")
 
-model = torch.load('log/model_08000.pt', map_location=torch.device('cpu'), weights_only=False)['model']
-weight = model['lm_head.weight']
+model = torch.load('log/model_11500.pt', map_location=torch.device('cpu'), weights_only=False)['model']
+weight = model['transformer.h.3.attn.c_proj.weight']
 # mask = model['transformer.h.0.attn.c_attn.z']
 
-plt.imshow(weight, interpolation='none', aspect='auto')
-plt.colorbar()
+plt.hist(weight.flatten(), 100000)
 plt.show()
+
+# print(torch.mean(weight).item())
+
+# plt.imshow(weight, interpolation='none')
+# plt.colorbar()
+# plt.show()
 
 # print(torch.mean(weight**2))
 
