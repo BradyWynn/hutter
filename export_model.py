@@ -23,12 +23,18 @@ device = torch.device('cuda')
 #             # print(module._get_weight_tensors())
 #             torch.save(module.quantizers['scaling_fwd'][1](module._get_weight_tensors()[0])._data, f"{os.path.join('model', name)}.pt")
 
-model = torch.load('log/model_11500.pt', map_location=torch.device('cpu'), weights_only=False)['model']
-weight = model['transformer.h.3.attn.c_proj.weight']
+model = torch.load('log/elated-capybara-4624.pt', map_location=torch.device('cpu'), weights_only=False)['model']
+weight = model['lm_head.weight']
 # mask = model['transformer.h.0.attn.c_attn.z']
 
-plt.hist(weight.flatten(), 100000)
+s = (weight.max()/127)
+rounded = (weight/s).round()
+
+plt.hist(rounded.flatten(), bins=int(rounded.max()-rounded.min()))
 plt.show()
+
+# plt.hist(weight.flatten(), 100000)
+# plt.show()
 
 # print(torch.mean(weight).item())
 

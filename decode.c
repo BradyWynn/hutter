@@ -1,6 +1,6 @@
 // bpe_decode.c
 // Simple decoder for the encoder you provided.
-// Reads: "tokenized_enwik9" (shorts), "first" (ints), "second" (ints).
+// Reads: "tokenized_enwik9" (uint16_ts), "first" (ints), "second" (ints).
 // Writes: "decoded_enwik9" (bytes)
 
 #include <stdio.h>
@@ -16,10 +16,10 @@ int64_t file_size_bytes(FILE *f) {
 }
 
 int main(void) {
-    const char encoded_name[] = "tokenized_enwik9";
+    const char encoded_name[] = "60k_enwik9";
     const char first_name[] = "first";
     const char second_name[] = "second";
-    const char out_name[] = "decoded_enwik9";
+    const char out_name[] = "decompressed_enwik9";
 
     // Open first/second and determine number of merges (num_tokens)
     FILE *f_first = fopen(first_name, "rb");
@@ -56,24 +56,24 @@ int main(void) {
         return 1;
     }
 
-    // Read encoded token stream (shorts)
+    // Read encoded token stream (uint16_ts)
     FILE *f_enc = fopen(encoded_name, "rb");
     if (!f_enc) {
         fprintf(stderr, "Error: could not open encoded file '%s'\n", encoded_name);
         return 1;
     }
     int64_t enc_bytes = file_size_bytes(f_enc);
-    if (enc_bytes < 0 || (enc_bytes % sizeof(short) != 0)) {
+    if (enc_bytes < 0 || (enc_bytes % sizeof(uint16_t) != 0)) {
         fprintf(stderr, "Error: encoded file has unexpected size\n");
         return 1;
     }
-    int enc_size = (int)(enc_bytes / sizeof(short));
-    short *arr = (short*)malloc((size_t)enc_size * sizeof(short));
+    int enc_size = (int)(enc_bytes / sizeof(uint16_t));
+    uint16_t *arr = (uint16_t*)malloc((size_t)enc_size * sizeof(uint16_t));
     if (!arr) {
         fprintf(stderr, "malloc failed for encoded array\n");
         return 1;
     }
-    size_t got = fread(arr, sizeof(short), (size_t)enc_size, f_enc);
+    size_t got = fread(arr, sizeof(uint16_t), (size_t)enc_size, f_enc);
     fclose(f_enc);
     if (got != (size_t)enc_size) {
         fprintf(stderr, "Error: could not read encoded array fully\n");
@@ -89,7 +89,7 @@ int main(void) {
         // Count occurrences of merged_token
         int count = 0;
         for (int k = 0; k < enc_size; ++k) {
-            if (arr[k] == (short)merged_token) count++;
+            if (arr[k] == (uint16_t)merged_token) count++;
         }
         if (count == 0) {
             // nothing to expand for this merge
@@ -100,7 +100,7 @@ int main(void) {
 
         // New size after expansion: each occurrence of merged_token becomes two tokens -> +count
         int new_size = enc_size + count;
-        short *new_arr = (short*)malloc((size_t)new_size * sizeof(short));
+        uint16_t *new_arr = (uint16_t*)malloc((size_t)new_size * sizeof(uint16_t));
         if (!new_arr) {
             fprintf(stderr, "malloc failed during expansion at iter %d\n", i);
             free(arr);
@@ -112,9 +112,9 @@ int main(void) {
         // Fill new array by replacing merged_token -> (a,b)
         int write = 0;
         for (int k = 0; k < enc_size; ++k) {
-            if (arr[k] == (short)merged_token) {
-                new_arr[write++] = (short)a;
-                new_arr[write++] = (short)b;
+            if (arr[k] == (uint16_t)merged_token) {
+                new_arr[write++] = (uint16_t)a;
+                new_arr[write++] = (uint16_t)b;
             } else {
                 new_arr[write++] = arr[k];
             }
@@ -147,7 +147,7 @@ int main(void) {
         free(second);
         return 1;
     }
-    // convert shorts to bytes and write
+    // convert uint16_ts to bytes and write
     for (int i = 0; i < enc_size; ++i) {
         unsigned char byte = (unsigned char)(arr[i] & 0xFF);
         fwrite(&byte, sizeof(unsigned char), 1, f_out);

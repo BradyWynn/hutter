@@ -12,8 +12,8 @@ import matplotlib.pyplot as plt
 @dataclass
 class GPTConfig:
 	context_length: int = 1024
-	vocab_size: int = 30256
-	n_layer: int = 4
+	vocab_size: int = 60256
+	n_layer: int = 12
 	n_head: int = 4
 	n_embd: int = 256
 
@@ -53,15 +53,23 @@ class Rotary(torch.nn.Module):
 		self.cos_cached = None
 		self.sin_cached = None
 
-	def forward(self, x):
+	def forward(self, x, input_pos=None):
 		seq_len = x.shape[1]
-		if seq_len != self.seq_len_cached:
-			self.seq_len_cached = seq_len
-			t = torch.arange(seq_len, device=x.device).type_as(self.inv_freq)
+		# build full cache up to max needed position
+		max_pos = (input_pos.max().item() + 1) if input_pos is not None else seq_len
+		if max_pos != self.seq_len_cached:
+			self.seq_len_cached = max_pos
+			t = torch.arange(max_pos, device=x.device).type_as(self.inv_freq)
 			freqs = torch.outer(t, self.inv_freq).to(x.device)
 			self.cos_cached = freqs.cos()
 			self.sin_cached = freqs.sin()
-		return self.cos_cached[None, :, None, :], self.sin_cached[None, :, None, :]
+		if input_pos is not None:
+			cos = self.cos_cached[input_pos]  # [seqlen, d]
+			sin = self.sin_cached[input_pos]
+		else:
+			cos = self.cos_cached
+			sin = self.sin_cached
+		return cos[None, :, None, :], sin[None, :, None, :]
 
 def apply_rotary_emb(x, cos, sin):
 	assert x.ndim == 4  # multihead attention
@@ -155,8 +163,8 @@ class Quantized_Embedding(nn.Module):
 class FeedForward(nn.Module):
 	def __init__(self, config: GPTConfig) -> None:
 		super().__init__()
-		self.c_fc = nn.Linear(config.n_embd, 4*config.n_embd)
-		self.c_proj = nn.Linear(4*config.n_embd, config.n_embd)
+		self.c_fc = Quantized_Linear(config.n_embd, 4*config.n_embd)
+		self.c_proj = Quantized_Linear(4*config.n_embd, config.n_embd)
 		self.c_proj.weight.data.zero_()
 
 	def forward(self, x: Tensor) -> Tensor:
@@ -180,8 +188,8 @@ class Attention(nn.Module):
 		assert config.n_embd % config.n_head == 0
 		self.config = config
 		# key, query, value projections for all heads, but in a batch
-		self.c_attn = nn.Linear(config.n_embd, 3*config.n_embd)
-		self.c_proj = nn.Linear(config.n_embd, config.n_embd)
+		self.c_attn = Quantized_Linear(config.n_embd, 3*config.n_embd)
+		self.c_proj = Quantized_Linear(config.n_embd, config.n_embd)
 		self.rotary = Rotary(config.head_n_embd)
 		self.c_proj.weight.data.zero_()
 		self.kv_cache = None
@@ -197,7 +205,7 @@ class Attention(nn.Module):
 
 		q, k = norm(q), norm(k)
 
-		cos, sin = self.rotary(q)
+		cos, sin = self.rotary(q, input_pos)
 		q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
 
 		q, k, v = map(lambda x: x.transpose(1, 2), (q, k, v))
@@ -219,7 +227,7 @@ class Attention(nn.Module):
 		# plt.colorbar()
 		# plt.show()
 
-		y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+		y = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, is_causal=(mask is None))
 		y = y.transpose(1, 2).contiguous().view(bsz, seqlen, self.config.n_embd)
 		return self.c_proj(y)
 
@@ -229,12 +237,12 @@ class GPT(nn.Module):
 		self.config = config
 
 		transformer = {
-		'wte' : nn.Embedding(config.vocab_size, config.n_embd),
+		'wte' : Quantized_Embedding(config.vocab_size, config.n_embd),
 		'h'   : nn.ModuleList(TransformerBlock(config) for _ in range(config.n_layer)),
 		}
 
 		self.transformer = nn.ModuleDict(transformer)
-		self.lm_head = nn.Linear(config.n_embd, config.vocab_size)
+		self.lm_head = Quantized_Linear(config.n_embd, config.vocab_size)
 		# self.transformer.wte.weight = self.lm_head.weight
 		self.lm_head.weight.data.zero_()
 
@@ -273,13 +281,13 @@ class GPT(nn.Module):
 		for b in self.transformer.h:
 			b.attn.kv_cache = KVCache(max_batch_size, max_seq_length, self.config.n_head, self.config.head_n_embd)
 
-		self.causal_mask = torch.tril(torch.ones(self.max_seq_length, self.max_seq_length, dtype=torch.bool)).view(1, 1, self.max_seq_length, self.max_seq_length)
+		causal_mask = torch.tril(torch.ones(self.max_seq_length, self.max_seq_length, dtype=torch.bool)).view(1, 1, self.max_seq_length, self.max_seq_length)
+		self.register_buffer('causal_mask', causal_mask)  # now moves with .to(device)
 
 	def forward(self, idx: Tensor, input_pos: Tensor=None) -> Tensor:
 		x = self.transformer.wte(idx)
 
-		# mask = self.causal_mask[:, :, input_pos]
-		mask = None
+		mask = self.causal_mask[:, :, input_pos] if input_pos is not None else None
 
 		for layer in self.transformer.h:
 			x = layer(x, input_pos, mask)

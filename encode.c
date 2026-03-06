@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <stdint.h>
 
 FILE* data;
 FILE* file;
@@ -11,7 +12,7 @@ typedef struct {
     int count;
 } Bigram;
 
-int replace_and_compact(short* arr, int size, Bigram bigram, int new_token){
+int replace_and_compact(uint16_t* arr, int size, Bigram bigram, int new_token){
     int write_idx = 0;
     int i = 0;
     int replaced = 0;
@@ -31,10 +32,10 @@ int replace_and_compact(short* arr, int size, Bigram bigram, int new_token){
 int main(){
 	int arr_size = pow(10, 9);
 
-    int num_tokens = 30000;
+    int num_tokens = 60000;
 
 	char dir[] = "enwik9";
-	char out[] = "tokenized_enwik9";
+	char out[] = "60k_enwik9";
 	data = fopen(dir, "r");
     FILE* first_file = fopen("first", "r");
     FILE* second_file = fopen("second", "r");
@@ -52,9 +53,9 @@ int main(){
 	fread(arr, sizeof(__uint8_t), arr_size, data);
 	fclose(data);
 
-	short* int16_arr = (short*)malloc(arr_size * sizeof(short));
+	uint16_t* int16_arr = (uint16_t*)malloc(arr_size * sizeof(uint16_t));
 	for (int i = 0; i < arr_size; i++){
-		int16_arr[i] = (short)arr[i];
+		int16_arr[i] = (uint16_t)arr[i];
 	}
 	free(arr);
 
@@ -66,7 +67,7 @@ int main(){
     }
     
 	file = fopen(out, "wb");
-	fwrite(int16_arr, sizeof(short), arr_size, file);
+	fwrite(int16_arr, sizeof(uint16_t), arr_size, file);
 	fclose(file);
 
 	return 0;

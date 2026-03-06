@@ -9,7 +9,7 @@ from muon import SingleDeviceMuon
 import lzma
 
 def load_tokens():
-	with open('tokenized_enwik9', 'rb') as f:
+	with open('60k_enwik9', 'rb') as f:
 		data = f.read()
 	tokens = np.frombuffer(data, dtype=np.uint16)
 	tokens = torch.tensor(tokens, dtype=torch.uint16)
@@ -58,11 +58,11 @@ wandb.init(
 	"n_embd": GPTConfig.n_embd,
 	"total_batch_size": total_batch_size,
 	"B": B,
-	"muon_lr": 0.020466009566743288,
-	"wte_lr": 0.18293164620959812,
-	"lm_head_lr": 0.00545592461436,
-	# "b_lr": 0.034601962195880175/2,
-	# "e_lr": 0.034601962195880175/2,
+	"muon_lr": 0.010031281386408198,
+	"wte_lr": 0.07826406405724602,
+	"lm_head_lr": 0.0010711674563439316,
+	"b_lr": 0.034601962195880175/2,
+	"e_lr": 0.034601962195880175/2,
 	# "sparsity_lr": 0.0005,
 	"num_tokens": len(train_loader.tokens)
 	}
@@ -74,15 +74,15 @@ torch.manual_seed(0)
 config = wandb.config
 raw_model = GPT()
 # raw_model.load_masks('log/prime-microwave-4201.pt')
-# raw_model.load_weights('log/stoic-gorge-4043.pt')
-# raw_model.load_state_dict(torch.load('log/snowy-wildflower-4414.pt', weights_only=False)['model'])
+raw_model.load_weights('log/amber-galaxy-4635.pt')
+# raw_model.load_state_dict(torch.load('log/valiant-river-4625.pt', weights_only=False)['model'])
 raw_model = raw_model.to(device)
 model = torch.compile(raw_model)
 
 weight_count = 12*GPTConfig.n_layer*GPTConfig.n_embd**2 + 2*GPTConfig.vocab_size*GPTConfig.n_embd
 print(weight_count)
 
-max_steps = 100000#(len(train_loader.tokens) // total_batch_size)
+max_steps = 100000 #(len(train_loader.tokens) // total_batch_size)
 # p_nonzero = (10**6/weight_count)
 
 cooldown_frac = 0.0
@@ -107,17 +107,17 @@ def get_lr(step: int):
 # init the optimizer(s)
 optimizer1 = torch.optim.Adam([raw_model.transformer.wte.weight], lr=config.wte_lr, betas=(0.9, 0.95), fused=True)
 optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=config.lm_head_lr, betas=(0.9, 0.95), fused=True)
-w_params = [m.weight for m in raw_model.transformer.h.modules() if isinstance(m, torch.nn.Linear)]
+w_params = [m.weight for m in raw_model.transformer.h.modules() if isinstance(m, Quantized_Linear)]
 # z_params = [m.z for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))]
-# e_params = [m.e for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))]
-# b_params = [m.b for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))]
-optimizer3 = SingleDeviceMuon(w_params, lr=config.muon_lr, momentum=0.95)
+e_params = [m.e for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))]
+b_params = [m.b for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))]
+optimizer3 = SingleDeviceMuon(w_params, lr=config.muon_lr, momentum=0.95, weight_decay=0.1)
 # optimizer3 = torch.optim.Adam(w_params, lr=config.muon_lr, betas=(0.9, 0.95), fused=True)
 # optimizer3 = Kron(w_params, lr=0.000762020871013)
-# optimizer4 = torch.optim.Adam(e_params, lr=config.e_lr, betas=(0.9, 0.95), fused=True)
-# optimizer5 = torch.optim.Adam(b_params, lr=config.b_lr, betas=(0.9, 0.95), fused=True)
+optimizer4 = torch.optim.Adam(e_params, lr=config.e_lr, betas=(0.9, 0.95), fused=True)
+optimizer5 = torch.optim.Adam(b_params, lr=config.b_lr, betas=(0.9, 0.95), fused=True)
 # optimizer6 = torch.optim.Adam(z_params, lr=config.sparsity_lr, betas=(0.9, 0.95), fused=True)
-optimizers = [optimizer1, optimizer2, optimizer3]
+optimizers = [optimizer1, optimizer2, optimizer3, optimizer4, optimizer5]
 
 for opt in optimizers:
 	for group in opt.param_groups:
@@ -142,12 +142,12 @@ for step in range(0, max_steps):
 		# you might also want to add optimizer.state_dict() and
 		# rng seeds etc., if you wanted to more exactly resume training
 		torch.save(checkpoint, checkpoint_path)
-		total_bits = 0
-		for m in raw_model.modules():
-			if isinstance(m, (torch.nn.Linear, torch.nn.Embedding)):
-				bits = lzma.compress(m.weight.cpu().detach().numpy())
-				total_bits += len(bits)
-		wandb.log({'lzma_bits': total_bits})
+		# total_bits = 0
+		# for m in raw_model.modules():
+		# 	if isinstance(m, (torch.nn.Linear, torch.nn.Embedding)):
+		# 		bits = lzma.compress(m.weight.cpu().detach().numpy())
+		# 		total_bits += len(bits)
+		# wandb.log({'lzma_bits': total_bits})
 
 	# do one step of the optimization
 	model.zero_grad(set_to_none=True)
@@ -167,17 +167,16 @@ for step in range(0, max_steps):
 		loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), y.flatten(), ignore_index=-1)
 		ce_loss = loss.detach()
 		# Q = torch.stack([m.qbits() for m in model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))]).sum()
-		# bits = sum([m.get_bits() for m in model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))])
-		l1 = sum([torch.sum(torch.log((m.weight.abs() + 0.1)/0.1)) for m in model.modules() if isinstance(m, (torch.nn.Linear, torch.nn.Embedding))])
+		bits = sum([m.get_bits() for m in model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))])
 		loss_last = F.cross_entropy(logits[:, -1, :].reshape(-1, logits.size(-1)), y[:, -1].view(-1), ignore_index=-1)
-		loss = (len(train_loader.tokens) * loss * np.log2(np.e) + l1)/(8*10**8)
+		loss = (len(train_loader.tokens) * loss * np.log2(np.e) + bits)/(8*10**8)
 		loss = loss / grad_accum_steps
 		ce_loss = ce_loss / grad_accum_steps
 		# Q = Q / grad_accum_steps
 		ce_loss_accum += ce_loss
 		# q_loss_accum += Q.detach()
 		act_norm_accum += act_norm.item() / grad_accum_steps
-		# bits_accum += bits / grad_accum_steps
+		bits_accum += bits / grad_accum_steps
 		loss_last = loss_last / grad_accum_steps
 		loss_accum += loss.detach()
 		loss_last_accum += loss_last.detach()
@@ -229,8 +228,8 @@ for step in range(0, max_steps):
 
 	wandb.log({
 		"loss": ce_loss_accum.item(),
-		# "bytes": (len(train_loader.tokens) * ce_loss_accum.item() * np.log2(np.e) + bits_accum)/8, 
-		# "bits_per_weight": bits/weight_count_rounded,
+		"bytes": (len(train_loader.tokens) * ce_loss_accum.item() * np.log2(np.e) + bits_accum)/8, 
+		"bits_per_weight": bits_accum/weight_count,
 		"lr": get_lr(step),
 		"weight_norm": weight_norm,
 		"last_loss": loss_last_accum.item(),

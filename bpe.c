@@ -78,7 +78,7 @@ static inline void dec_count_if_exists(int a, int b, int delta) {
 }
 
 // Build bigram table from scratch using the "skip zeros" logical adjacency
-static void build_table(short *arr, int size) {
+static void build_table(uint16_t *arr, int size) {
     // clear only used entries
     for (int i = 0; i < hash_list_size; ++i) {
         unsigned int idx = hash_list[i];
@@ -114,7 +114,7 @@ static int pick_max_bigram_index(void) {
 // Replace occurrences of bigram (first,second) with new_token.
 // This uses logical adjacency (next non-zero) and updates counts incrementally.
 // Returns number of replacements performed.
-static int replace_and_update(short *arr, int size, BigramEntry bigram, int new_token) {
+static int replace_and_update(uint16_t *arr, int size, BigramEntry bigram, int new_token) {
     int replaced = 0;
 
     int prev_idx = -1;       // index of previous non-zero token in array
@@ -149,7 +149,7 @@ static int replace_and_update(short *arr, int size, BigramEntry bigram, int new_
                 }
 
                 // perform replacement in array: place new_token at prev_idx, zero-out curr_idx
-                arr[prev_idx] = (short)new_token;
+                arr[prev_idx] = (uint16_t)new_token;
                 arr[curr_idx] = 0;
 
                 replaced += 1;
@@ -178,8 +178,8 @@ static int replace_and_update(short *arr, int size, BigramEntry bigram, int new_
 }
 
 // Remove zeros from array: shift non-zero tokens left into a new compact array
-static void remove_empty(short *arr, int size, int new_size) {
-    short *tmp = (short*)malloc(new_size * sizeof(short));
+static void remove_empty(uint16_t *arr, int size, int new_size) {
+    uint16_t *tmp = (uint16_t*)malloc(new_size * sizeof(uint16_t));
     if (!tmp) { fprintf(stderr, "malloc failed in remove_empty\n"); exit(1); }
     int w = 0;
     for (int i = 0; i < size && w < new_size; ++i) {
@@ -204,7 +204,7 @@ int main(void) {
 
     // read file as bytes (0..255), store into int16 array
     FILE *data = fopen(in_name, "rb");
-    short *int16_arr = (short*)malloc(arr_size * sizeof(short));
+    uint16_t *int16_arr = (uint16_t*)malloc(arr_size * sizeof(uint16_t));
     if (!int16_arr) { fprintf(stderr, "malloc failed\n"); return 1; }
 
     if (data) {
@@ -213,17 +213,17 @@ int main(void) {
         size_t got = fread(tmp, sizeof(uint8_t), (size_t)arr_size, data);
         fclose(data);
         for (int i = 0; i < arr_size; ++i) {
-            int16_arr[i] = (i < (int)got) ? (short)tmp[i] : 0;
+            int16_arr[i] = (i < (int)got) ? (uint16_t)tmp[i] : 0;
         }
         free(tmp);
     } else {
         // fallback synthetic sample if file not found
         fprintf(stderr, "warning: '%s' not opened. Using synthetic data.\n", in_name);
-        for (int i = 0; i < arr_size; ++i) int16_arr[i] = (short)((i % 255) + 1);
+        for (int i = 0; i < arr_size; ++i) int16_arr[i] = (uint16_t)((i % 255) + 1);
     }
 
     // number of merges to perform
-    int num_tokens = 30000;
+    int num_tokens = 60000;
     int *first = (int*)malloc(num_tokens * sizeof(int));
     int *second = (int*)malloc(num_tokens * sizeof(int));
     if (!first || !second) { fprintf(stderr, "malloc failed\n"); return 1; }
@@ -277,7 +277,7 @@ int main(void) {
     // write outputs (like original)
     FILE *out = fopen(out_name, "wb");
     if (out) {
-        fwrite(int16_arr, sizeof(short), arr_size, out);
+        fwrite(int16_arr, sizeof(uint16_t), arr_size, out);
         fclose(out);
     } else {
         fprintf(stderr, "warning: could not open output '%s'\n", out_name);

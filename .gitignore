@@ -3,8 +3,6 @@ log/
 wandb/
 model/
 compressed_model/
-enwik9
-tokenized_enwik9
 *.zip
 *.pt
 *.exe
@@ -12,3 +10,4 @@ tokenized_enwik9
 *.npy
 *.txt
 *.csv
+*enwik9

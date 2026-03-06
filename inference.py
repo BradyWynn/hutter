@@ -9,15 +9,27 @@ def norm(x):
     return F.rms_norm(x, (x.size(-1),))
 
 model = GPT()
-model.load_state_dict(torch.load('log/model_00500.pt', weights_only=False)['model'])
+model.load_state_dict(torch.load('log/model_04000.pt', weights_only=False)['model'])
 
-layer = model.transformer.h[0].attn.c_attn
+layer = model.lm_head
 
-qw = layer.qweight()
-w = (qw.round() - qw).detach() + qw  # straight through estimator
-w = 2**layer.e.clip(-8, 8) * w
-plt.imshow(qw.detach().numpy())
-plt.show()
+# qw = layer.qweight()
+# w = (qw.round() - qw).detach() + qw  # straight through estimator
+# w = 2**layer.e.clip(-8, 8) * w
+# print(torch.mean(layer.b.clip(0, 16)).item())
+# accum = []
+# for i in range(layer.weight.shape[0]):
+#     counts, bin_edges = torch.histogram(w[i, :], bins=int(w.max()-w.min()))
+
+#     probs = (counts/sum(counts)).detach()
+#     bpw = 0
+
+#     for p in probs:
+#         if p != 0:
+#             bpw += -1*p.item()*np.log2(p.item())
+
+#     accum.append(bpw)
+# print(sum(accum)/len(accum))
 
 # with open('tokenized_enwik9', 'rb') as f:
 #     data = f.read()

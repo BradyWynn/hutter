@@ -8,10 +8,10 @@ from tqdm import tqdm
 device = torch.device('cuda')
 
 model = GPT()
-model.load_state_dict(torch.load('log/model_20000.pt', weights_only=False)['model'])
+model.load_state_dict(torch.load('log/model_50000.pt', weights_only=False)['model'])
 model.to(device)
 
-with open('tokenized_enwik9', 'rb') as f:
+with open('60k_enwik9', 'rb') as f:
     data = f.read()
 tokens = np.frombuffer(data, dtype=np.uint16)
 tokens = torch.tensor(tokens, dtype=torch.uint16, device=device)
@@ -26,4 +26,3 @@ with torch.no_grad():
         probs = torch.softmax(logits[:, -1], dim=-1)
         scores.append(-torch.log(probs[0, y]).item())
         print(sum(scores)/len(scores))
-
