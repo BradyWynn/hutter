@@ -1,35 +1,32 @@
 import torch
 import numpy as np
-from model import GPT
+from model import GPT, GPTConfig, Quantized_Linear, Quantized_Embedding
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
 from tqdm import tqdm
 
 def norm(x):
-    return F.rms_norm(x, (x.size(-1),))
+	return F.rms_norm(x, (x.size(-1),))
 
 model = GPT()
-model.load_state_dict(torch.load('log/model_04000.pt', weights_only=False)['model'])
+model.load_state_dict(torch.load('log/deep-music-4746.pt', weights_only=False)['model'])
 
-layer = model.lm_head
+total_bits = 0
+# layer = model.transformer.wte
+for layer in model.modules():
+	if isinstance(layer, (Quantized_Linear, Quantized_Embedding)):
+		s = (3*layer.weight.std())/(2**(layer.b.clip(0, 16)-1))
+		w = layer.weight/s
+		w = (w.round() - w).detach() + w  # straight through estimator
+		counts, bin_edges = torch.histogram(w, bins=max(1, int(w.max()-w.min())))
+		probs = (counts/sum(counts)).detach()
+		bpw = 0
 
-# qw = layer.qweight()
-# w = (qw.round() - qw).detach() + qw  # straight through estimator
-# w = 2**layer.e.clip(-8, 8) * w
-# print(torch.mean(layer.b.clip(0, 16)).item())
-# accum = []
-# for i in range(layer.weight.shape[0]):
-#     counts, bin_edges = torch.histogram(w[i, :], bins=int(w.max()-w.min()))
-
-#     probs = (counts/sum(counts)).detach()
-#     bpw = 0
-
-#     for p in probs:
-#         if p != 0:
-#             bpw += -1*p.item()*np.log2(p.item())
-
-#     accum.append(bpw)
-# print(sum(accum)/len(accum))
+		for p in probs:
+			if p != 0:
+				bpw += -1*p.item()*np.log2(p.item())
+		total_bits += (bpw*layer.weight.shape.numel())
+print(total_bits/8)
 
 # with open('tokenized_enwik9', 'rb') as f:
 #     data = f.read()

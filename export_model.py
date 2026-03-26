@@ -23,15 +23,42 @@ device = torch.device('cuda')
 #             # print(module._get_weight_tensors())
 #             torch.save(module.quantizers['scaling_fwd'][1](module._get_weight_tensors()[0])._data, f"{os.path.join('model', name)}.pt")
 
-model = torch.load('log/elated-capybara-4624.pt', map_location=torch.device('cpu'), weights_only=False)['model']
+model = torch.load('log/curious-monkey-4740.pt', map_location=torch.device('cpu'), weights_only=False)['model']
 weight = model['lm_head.weight']
-# mask = model['transformer.h.0.attn.c_attn.z']
+bits = model['lm_head.b']
 
-s = (weight.max()/127)
-rounded = (weight/s).round()
+s = (3*weight.std())/(2**(bits.clip(0, 16)-1))
+w = weight/s
+w = (w.round() - w).detach() + w  # straight through estimator
 
-plt.hist(rounded.flatten(), bins=int(rounded.max()-rounded.min()))
-plt.show()
+# plt.hist(w.flatten(), int(w.max()-w.min()))
+# plt.show()
+
+counts, bin_edges = torch.histogram(w, bins=int(w.max()-w.min()))
+probs = (counts/sum(counts)).detach()
+bpw = 0
+
+for p in probs:
+    if p != 0:
+        bpw += -1*p.item()*np.log2(p.item())
+print(bpw)
+# print(bits[i].item())
+# plt.hist(sub_array.flatten(), max(int(sub_array.max()-sub_array.min()), 1))
+# plt.show()
+
+# plt.hist(w.flatten(), bins=int(w.max()-w.min()))
+# plt.show()
+
+# counts, bin_edges = torch.histogram(w, bins=int(w.max()-w.min()))
+
+# print(int(w.max()-w.min()))
+# probs = (counts/sum(counts)).detach()
+# bpw = 0
+
+# for p in probs:
+#     if p != 0:
+#         bpw += -1*p.item()*np.log2(p.item())
+# print(bpw)
 
 # plt.hist(weight.flatten(), 100000)
 # plt.show()
