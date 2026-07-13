@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 @dataclass
 class GPTConfig:
 	context_length: int = 1024
-	vocab_size: int = 30256
+	vocab_size: int = 5256
 	n_layer: int = 12
 	n_head: int = 4
 	n_embd: int = 256
@@ -28,6 +28,13 @@ def find_multiple(n: int, k: int) -> int:
 	if n % k == 0:
 		return n
 	return n + k - (n % k)
+
+def topk_sparsify(x, k):
+	B = x.shape[0]
+	flat = x.reshape(B, -1)
+	_, idx = flat.abs().topk(k, dim=-1)
+	mask = torch.zeros_like(flat).scatter_(-1, idx, 1.0)
+	return (flat * mask).view_as(x)
 
 class KVCache(nn.Module):
 	def __init__(self, max_batch_size, max_seq_length, n_heads, head_n_embd, dtype=torch.bfloat16):
@@ -45,30 +52,21 @@ class KVCache(nn.Module):
 		return k_out, v_out
 
 class Rotary(torch.nn.Module):
-	def __init__(self, dim, base=10000):
+	def __init__(self, dim, base=10000, max_seq_len=GPTConfig.context_length):
 		super().__init__()
 		inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
-		self.register_buffer('inv_freq', inv_freq)
-		self.seq_len_cached = None
-		self.cos_cached = None
-		self.sin_cached = None
+		t = torch.arange(max_seq_len).float()
+		freqs = torch.outer(t, inv_freq)
+		self.register_buffer('cos_cached', freqs.cos())
+		self.register_buffer('sin_cached', freqs.sin())
 
 	def forward(self, x, input_pos=None):
-		seq_len = x.shape[1]
-		# build full cache up to max needed position
-		max_pos = (input_pos.max().item() + 1) if input_pos is not None else seq_len
-		if max_pos != self.seq_len_cached:
-			self.seq_len_cached = max_pos
-			t = torch.arange(max_pos, device=x.device).type_as(self.inv_freq)
-			freqs = torch.outer(t, self.inv_freq).to(x.device)
-			self.cos_cached = freqs.cos()
-			self.sin_cached = freqs.sin()
 		if input_pos is not None:
-			cos = self.cos_cached[input_pos]  # [seqlen, d]
+			cos = self.cos_cached[input_pos]
 			sin = self.sin_cached[input_pos]
 		else:
-			cos = self.cos_cached
-			sin = self.sin_cached
+			cos = self.cos_cached[:x.shape[1]]
+			sin = self.sin_cached[:x.shape[1]]
 		return cos[None, :, None, :], sin[None, :, None, :]
 
 def apply_rotary_emb(x, cos, sin):
@@ -141,8 +139,8 @@ class Quantized_Embedding(nn.Module):
 class FeedForward(nn.Module):
 	def __init__(self, config: GPTConfig) -> None:
 		super().__init__()
-		self.c_fc = nn.Linear(config.n_embd, 4*config.n_embd)
-		self.c_proj = nn.Linear(4*config.n_embd, config.n_embd)
+		self.c_fc = nn.Linear(config.n_embd, 4*config.n_embd, bias=True)
+		self.c_proj = nn.Linear(4*config.n_embd, config.n_embd, bias=True)
 		self.c_proj.weight.data.zero_()
 
 	def forward(self, x: Tensor) -> Tensor:
@@ -166,9 +164,9 @@ class Attention(nn.Module):
 		assert config.n_embd % config.n_head == 0
 		self.config = config
 		# key, query, value projections for all heads, but in a batch
-		self.c_attn = nn.Linear(config.n_embd, 3*config.n_embd)
-		self.c_proj = nn.Linear(config.n_embd, config.n_embd)
-		self.rotary = Rotary(config.head_n_embd)
+		self.c_attn = nn.Linear(config.n_embd, 3*config.n_embd, bias=True)
+		self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=True)
+		self.rotary = Rotary(config.head_n_embd, max_seq_len=config.context_length)
 		self.c_proj.weight.data.zero_()
 		self.kv_cache = None
 
@@ -191,21 +189,7 @@ class Attention(nn.Module):
 		if self.kv_cache is not None:
 			k, v = self.kv_cache.update(input_pos, k, v)
 
-		# L, S = q.size(-2), k.size(-2)
-		# scale_factor = 1 / math.sqrt(q.size(-1))
-		# attn_bias = torch.zeros(L, S, dtype=q.dtype, device=q.device)
-		# temp_mask = torch.ones(L, S, dtype=torch.bool).tril(diagonal=0)
-		# attn_bias.masked_fill_(temp_mask.logical_not(), float("-inf"))
-
-		# attn_weight = q @ k.transpose(-2, -1) * scale_factor
-		# attn_weight += attn_bias
-		# attn_weight = torch.softmax(attn_weight, dim=-1)
-
-		# plt.imshow((attn_weight).squeeze().detach()[1], aspect='auto')
-		# plt.colorbar()
-		# plt.show()
-
-		y = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, is_causal=(mask is None))
+		y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
 		y = y.transpose(1, 2).contiguous().view(bsz, seqlen, self.config.n_embd)
 		return self.c_proj(y)
 
@@ -220,9 +204,12 @@ class GPT(nn.Module):
 		}
 
 		self.transformer = nn.ModuleDict(transformer)
-		self.lm_head = nn.Linear(config.n_embd, config.vocab_size)
+		self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=True)
 		# self.transformer.wte.weight = self.lm_head.weight
 		self.lm_head.weight.data.zero_()
+
+		causal_mask = torch.tril(torch.ones(config.context_length, config.context_length, dtype=torch.bool)).view(1, 1, config.context_length, config.context_length)
+		self.register_buffer('causal_mask', causal_mask)
 
 	def load_weights(self, checkpoint_path, device="cpu"):
 		state = torch.load(checkpoint_path, weights_only=False, map_location=device)['model']
@@ -265,12 +252,15 @@ class GPT(nn.Module):
 	def forward(self, idx: Tensor, input_pos: Tensor=None) -> Tensor:
 		x = self.transformer.wte(idx)
 
-		mask = self.causal_mask[:, :, input_pos] if input_pos is not None else None
+		if input_pos is None:
+			input_pos = torch.arange(GPTConfig.context_length, device=idx.device)
+
+		mask = self.causal_mask[:, :, input_pos]
 
 		for layer in self.transformer.h:
 			x = layer(x, input_pos, mask)
 
-		act_norm = (torch.max(x**2)/torch.mean(x**2)).detach()
 		x = norm(x)
+
 		logits = self.lm_head(x)
-		return logits, act_norm
+		return logits

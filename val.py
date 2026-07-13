@@ -1,65 +1,46 @@
 import torch
 import numpy as np
 from model import GPT
-import matplotlib.pyplot as plt
 import torch.nn.functional as F
 from tqdm import tqdm
 
+device_type = "cuda"
 device = torch.device('cuda')
 
-model = GPT()
-model.load_state_dict(torch.load('log/model_55500.pt', weights_only=False)['model'])
-model.to(device)
+def load(path):
+    weights = torch.load(path, weights_only=False)['model']
+    model = GPT()
+    model.load_state_dict(weights)
+    for p in model.parameters():
+        p.requires_grad = False
+    model.eval()
+    model = torch.compile(model)
+    return model.to(device)
 
-with open('30k_enwik9', 'rb') as f:
+names = [
+    'comfy-vortex-5164'
+    ]
+
+models = [load(f"log/{n}.pt") for n in names]
+
+with open('5k_enwik9', 'rb') as f:
     data = f.read()
 tokens = np.frombuffer(data, dtype=np.uint16)
-tokens = torch.tensor(tokens, dtype=torch.long, device=device)
+tokens = torch.tensor(tokens, dtype=torch.uint16, device=device)
 
 scores = []
-k = 0
+ctx_len = 1024
 
-with torch.no_grad():
-    while True:
-        i = torch.randint(0, len(tokens)-898, (1,)).item()
-        y = tokens[i+898]
-        logits, act_norm = model(tokens[i:i+898].unsqueeze(0).long())
-        probs = torch.softmax(logits[:, -1], dim=-1)
-        scores.append(-torch.log(probs[0, y]).item())
-        print(sum(scores)/len(scores), k)
-        k = k + 1
+for _ in tqdm(range(10000)):
+    i = torch.randint(0, len(tokens)-ctx_len, (1,)).item()
+    y = tokens[i+ctx_len].long()
+    x = tokens[i:i+ctx_len].unsqueeze(0).long()
+    with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+        probs = sum(F.softmax(m(x)[:, -1], dim=-1) for m in models) / len(models)
+    scores.append(-torch.log(probs[0, y]).item())
 
-# seq_len = 1024
-# batch_size = 16
-
-# scores = []
-
-# with torch.no_grad():
-#     for _ in tqdm(range(20000)):
-#         # sample start indices
-#         i = torch.randint(0, len(tokens) - seq_len - 1, (batch_size,))
-
-#         # build index matrix
-#         idx = i[:, None] + torch.arange(seq_len)
-
-#         # gather token windows
-#         x = tokens[idx].long()
-#         y = tokens[idx + 1].long()
-
-#         # forward
-#         logits, act_norm = model(x)
-
-#         # compute per-token CE
-#         loss = F.cross_entropy(
-#             logits.reshape(-1, logits.size(-1)),
-#             y.reshape(-1),
-#             reduction="none"
-#         ).view(batch_size, seq_len)
-
-#         scores.append(loss)
-
-# scores = torch.cat(scores)
-# print(scores.shape)
-
-# plt.plot(scores.mean(dim=0).cpu())
-# plt.show()
+t = np.asarray(scores)
+mean = t.mean()
+se = t.std(ddof=1) / np.sqrt(len(t))
+lo, hi = mean - 1.96*se, mean + 1.96*se   # 95%
+print(f"{mean:.3f} nats  [{lo:.3f}, {hi:.3f}]")

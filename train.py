@@ -9,7 +9,7 @@ from muon import SingleDeviceMuon
 import lzma
 
 def load_tokens():
-	with open('30k_enwik9', 'rb') as f:
+	with open('5k_enwik9', 'rb') as f:
 		data = f.read()
 	tokens = np.frombuffer(data, dtype=np.uint16)
 	tokens = torch.tensor(tokens, dtype=torch.uint16)
@@ -36,7 +36,7 @@ print(f"using device: {device}")
 device_type = "cuda" if device.startswith("cuda") else "cpu"
 
 total_batch_size = 2**7 # 2**19, ~0.5M, in number of tokens
-B = 8 # micro batch size
+B = 16 # micro batch size
 assert total_batch_size % B == 0, "make sure total_batch_size is divisible by B"
 grad_accum_steps = total_batch_size // B
 print(f"total desired batch size: {total_batch_size}")
@@ -58,10 +58,10 @@ wandb.init(
 	"n_embd": GPTConfig.n_embd,
 	"total_batch_size": total_batch_size,
 	"B": B,
-	"muon_lr": 0.00320264250353693,
-	"wte_lr": 0.057634333366200406,
-	"lm_head_lr": 0.0003347659883507895,
-	# "b_lr": 0.034601962195880175/10,
+	"muon_lr": 0.002776642342633839,
+	"wte_lr": 0.05927929831806831,
+	"lm_head_lr": 0.00007676292626021907,
+	"b_lr": 0.0165366078481971,
 	"num_tokens": len(train_loader.tokens)
 	}
 )
@@ -71,11 +71,13 @@ torch.manual_seed(0)
 # wandb.init(project='hutter')
 config = wandb.config
 raw_model = GPT()
-# raw_model.load_masks('log/prime-microwave-4201.pt')
-# raw_model.load_weights('log/valiant-river-4625.pt')
-raw_model.load_state_dict(torch.load('log/tiny-bullet-bill-4780.pt', weights_only=False)['model'])
+
+# Load the checkpoint once so we can pull both model weights and (if present)
+# optimizer state out of the same file.
+checkpoint = torch.load('log/laced-microwave-5555.pt', weights_only=False)
+raw_model.load_state_dict(checkpoint['model'])
 raw_model = raw_model.to(device)
-model = torch.compile(raw_model)
+model = torch.compile(raw_model, mode='max-autotune-no-cudagraphs')
 
 weight_count = 12*GPTConfig.n_layer*GPTConfig.n_embd**2 + 2*GPTConfig.vocab_size*GPTConfig.n_embd
 print(weight_count)
@@ -106,10 +108,25 @@ def get_lr(step: int):
 optimizer1 = torch.optim.Adam([raw_model.transformer.wte.weight], lr=config.wte_lr, betas=(0.9, 0.95), fused=True)
 optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=config.lm_head_lr, betas=(0.9, 0.95), fused=True)
 w_params = [m.weight for m in raw_model.transformer.h.modules() if isinstance(m, torch.nn.Linear)]
-# b_params = [m.b for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))]
-optimizer3 = SingleDeviceMuon(w_params, lr=config.muon_lr, momentum=0.0)
-# optimizer4 = torch.optim.Adam(b_params, lr=config.b_lr, betas=(0.9, 0.95), fused=True)
-optimizers = [optimizer1, optimizer2, optimizer3]
+b_params = [m.bias for m in raw_model.transformer.h.modules() if isinstance(m, torch.nn.Linear)]
+optimizer3 = SingleDeviceMuon(w_params, lr=config.muon_lr, momentum=0.95)
+optimizer4 = torch.optim.Adam(b_params, lr=config.b_lr, betas=(0.9, 0.95), fused=True)
+optimizers = [optimizer1, optimizer2, optimizer3, optimizer4]
+
+# If the checkpoint we resumed from has optimizer state (it won't the first
+# time you run this against an old checkpoint that predates this change),
+# load it into each optimizer in the same order they were created/saved.
+for opt, state in zip(optimizers, checkpoint['optimizers']):
+	opt.load_state_dict(state)
+
+for group in optimizer1.param_groups:
+	group["lr"] = config.wte_lr
+for group in optimizer2.param_groups:
+	group["lr"] = config.lm_head_lr
+for group in optimizer3.param_groups:
+	group["lr"] = config.muon_lr
+for group in optimizer4.param_groups:
+	group["lr"] = config.b_lr
 
 for opt in optimizers:
 	for group in opt.param_groups:
@@ -130,9 +147,10 @@ for step in range(0, max_steps):
 			'model': raw_model.state_dict(),
 			'config': model.config,
 			'step': step,
+			'optimizers': [opt.state_dict() for opt in optimizers],
 		}
-		# you might also want to add optimizer.state_dict() and
-		# rng seeds etc., if you wanted to more exactly resume training
+		# you might also want to add rng seeds etc., if you wanted to more
+		# exactly resume training
 		torch.save(checkpoint, checkpoint_path)
 		# total_bits = 0
 		# for m in raw_model.modules():
@@ -147,7 +165,6 @@ for step in range(0, max_steps):
 	loss_last_accum = 0.0
 	ce_loss_accum = 0.0
 	# q_loss_accum = 0.0
-	act_norm_accum = 0.0
 	# bits_accum = 0.0
 	# weight_count_rounded = sum([m.z.round().sum().item() for m in raw_model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))])
 	for micro_step in range(grad_accum_steps):
@@ -155,7 +172,7 @@ for step in range(0, max_steps):
 		x, y = x.to(device), y.to(device)
 		# added after video, this field is also used by the forward pass.
 		with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-			logits, act_norm = model(x)
+			logits = model(x)
 		loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), y.flatten(), ignore_index=-1)
 		ce_loss = loss.detach()
 		# Q = torch.stack([m.qbits() for m in model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))]).sum()
@@ -167,7 +184,6 @@ for step in range(0, max_steps):
 		# Q = Q / grad_accum_steps
 		ce_loss_accum += ce_loss
 		# q_loss_accum += Q.detach()
-		act_norm_accum += act_norm.item() / grad_accum_steps
 		# bits_accum += bits / grad_accum_steps
 		loss_last = loss_last / grad_accum_steps
 		loss_accum += loss.detach()
@@ -191,7 +207,7 @@ for step in range(0, max_steps):
 
 	wandb.log({
 		"loss": ce_loss_accum.item(),
-		# "bytes": (len(train_loader.tokens) * ce_loss_accum.item() * np.log2(np.e) + bits_accum)/8, 
+		"bytes": (len(train_loader.tokens) * ce_loss_accum.item() * np.log2(np.e))/8, 
 		# "bits_per_weight": bits_accum/weight_count,
 		"lr": get_lr(step),
 		"weight_norm": weight_norm,
@@ -199,7 +215,6 @@ for step in range(0, max_steps):
 		# "params": weight_count_rounded,
 		# "params_unrounded": q_loss_accum,
 		'step': step,
-		'act_norm': act_norm_accum,
 		# 'model_bytes': bits_accum/8,
 		# "real_params": bits_accum,
 		'dt': dt*1000,
@@ -207,15 +222,16 @@ for step in range(0, max_steps):
 
 # sweep_config = {
 #     'method': 'bayes',
-# 	'metric': {
-# 		'name': 'loss',
-# 		'goal': 'minimize'
-# 	},
-# 	'parameters': {
-# 		'muon_lr': {'distribution': 'uniform', 'min': 0.0, 'max': 0.010031281386408198},
-# 		'wte_lr': {'distribution': 'uniform', 'min': 0.0, 'max': 0.07826406405724602},
-# 		'lm_head_lr': {'distribution': 'uniform', 'min': 0.0, 'max': 0.00107116745635},
-# 	}
+#     'metric': {
+#         'name': 'loss',
+#         'goal': 'minimize'
+#     },
+#     'parameters': {
+#         'muon_lr': {'distribution': 'uniform', 'min': 0.0, 'max': 0.008825225032254759},
+#         'wte_lr': {'distribution': 'uniform', 'min': 0.0, 'max': 0.060389794738774975},
+#         'lm_head_lr': {'distribution': 'uniform', 'min': 0.0, 'max': 0.002268237186510547},
+#         'b_lr': {'distribution': 'uniform', 'min': 0.0, 'max': 0.034468952961138936},
+#     }
 #     }
 
 # sweep_id = wandb.sweep(sweep_config, project="hutter")
