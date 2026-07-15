@@ -14,8 +14,8 @@ class GPTConfig:
 	context_length: int = 1024
 	vocab_size: int = 5256
 	n_layer: int = 12
-	n_head: int = 4
-	n_embd: int = 256
+	n_head: int = 12
+	n_embd: int = 768
 
 	@property
 	def head_n_embd(self):
@@ -101,9 +101,14 @@ class Quantized_Linear(nn.Module):
 		nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
 
 	def forward(self, x: Tensor) -> Tensor:
-		s = (3*self.weight.std())/(2**(self.b.clip(0, 16)-1))
-		w = self.weight/s
-		w = (w.round() - w).detach() + w  # straight through estimator
+		b = self.b.clip(0, 16)
+		s = (3*self.weight.std())/(2**(b-1))
+		s = s.clamp_min(1e-8)
+		q = self.weight / s
+		qmax = 2**(b-1) - 1
+		qmin = -(2**(b-1))
+		q_clamped = q.round().clamp(qmin, qmax)
+		w = (q_clamped - q).detach() + q   # STE, now with clamped forward value
 		w = w * s
 		return F.linear(x, w)
 	
@@ -129,12 +134,17 @@ class Quantized_Embedding(nn.Module):
 	def reset_parameters(self) -> None:
 		nn.init.normal_(self.weight)
 
-	def forward(self, input: Tensor) -> Tensor:
-		s = (3*self.weight.std())/(2**(self.b.clip(0, 16)-1))
-		w = self.weight/s
-		w = (w.round() - w).detach() + w  # straight through estimator
+	def forward(self, x: Tensor) -> Tensor:
+		b = self.b.clip(0, 16)
+		s = (3*self.weight.std())/(2**(b-1))
+		s = s.clamp_min(1e-8)
+		q = self.weight / s
+		qmax = 2**(b-1) - 1
+		qmin = -(2**(b-1))
+		q_clamped = q.round().clamp(qmin, qmax)
+		w = (q_clamped - q).detach() + q   # STE, now with clamped forward value
 		w = w * s
-		return F.embedding(input, w)
+		return F.embedding(x, w)
 
 class FeedForward(nn.Module):
 	def __init__(self, config: GPTConfig) -> None:

@@ -23,25 +23,43 @@ device = torch.device('cuda')
 #             # print(module._get_weight_tensors())
 #             torch.save(module.quantizers['scaling_fwd'][1](module._get_weight_tensors()[0])._data, f"{os.path.join('model', name)}.pt")
 
-model = torch.load('log/curious-monkey-4740.pt', map_location=torch.device('cpu'), weights_only=False)['model']
-weight = model['lm_head.weight']
-bits = model['lm_head.b']
+model = torch.load('log/model_22000.pt', map_location=torch.device('cpu'), weights_only=False)['model']
+weight = model['transformer.h.6.mlp.c_fc.weight']
+bits = model['transformer.h.6.mlp.c_fc.b']
 
-s = (3*weight.std())/(2**(bits.clip(0, 16)-1))
-w = weight/s
-w = (w.round() - w).detach() + w  # straight through estimator
+b = bits.clip(0, 16)
+s = (3*weight.std())/(2**(b-1))
+s = s.clamp_min(1e-8)
+q = weight / s
+qmax = 2**(b-1) - 1
+qmin = -(2**(b-1))
+q_clamped = q.round().clamp(qmin, qmax)
+# w = (q_clamped - q).detach() + q   # STE, now with clamped forward value
+# w = w * s
+
+print(torch.mean(b))
+
+print(q_clamped.shape)
+a = lzma.compress(q_clamped.numpy())
+print(len(a))
+
+plt.imshow(q_clamped)
+plt.show()
+
+# plt.hist(q_clamped.flatten(), 100)
+# plt.show()
 
 # plt.hist(w.flatten(), int(w.max()-w.min()))
 # plt.show()
 
-counts, bin_edges = torch.histogram(w, bins=int(w.max()-w.min()))
-probs = (counts/sum(counts)).detach()
-bpw = 0
+# counts, bin_edges = torch.histogram(w, bins=int(w.max()-w.min()))
+# probs = (counts/sum(counts)).detach()
+# bpw = 0
 
-for p in probs:
-    if p != 0:
-        bpw += -1*p.item()*np.log2(p.item())
-print(bpw)
+# for p in probs:
+#     if p != 0:
+#         bpw += -1*p.item()*np.log2(p.item())
+# print(bpw)
 # print(bits[i].item())
 # plt.hist(sub_array.flatten(), max(int(sub_array.max()-sub_array.min()), 1))
 # plt.show()
