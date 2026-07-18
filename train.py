@@ -1,4 +1,6 @@
 import os
+import gc
+import math
 import time
 import torch
 from torch.nn import functional as F
@@ -8,11 +10,47 @@ import wandb
 from muon import SingleDeviceMuon
 # import lzma
 
+# ---------------------------------------------------------------------------
+# run mode
+# ---------------------------------------------------------------------------
+SWEEP = False          # False: one run using DEFAULTS. True: launch/join a wandb sweep.
+SWEEP_COUNT = 100       # runs for this agent to execute
+SWEEP_ID = None        # set to an existing sweep id to join it instead of creating one
+
+# Defaults for a single run. Under a sweep, wandb overrides the swept keys.
+DEFAULTS = {
+	"architecture": "transformer",
+	"ensemble_k": 1,       # members in the uniform mixture
+	"replay_steps": 1,     # extra optimizer steps per online step, on already-coded data
+	"replay_seed": 1234,   # replay sampling must be reproducible: the decoder replays it too
+	"context_length": GPTConfig.context_length,
+	"vocab_size": GPTConfig.vocab_size,
+	"n_layer": GPTConfig.n_layer,
+	"n_head": GPTConfig.n_head,
+	"n_embd": GPTConfig.n_embd,
+	"total_batch_size": 32,   # in sequences, not tokens
+	"B": 4,                   # micro batch size
+	"muon_lr": 0.09162826608428096,
+	"wte_lr": 0.8852204383983739,
+	"lm_head_lr": 0.00379678184918,
+	"b_lr": 0.029088727454488157,
+	"muon_wd": 0.00007242467972267174,
+	"cooldown_frac": 0.0,
+	"warmup_frac": 0.0,
+}
+
+# ---------------------------------------------------------------------------
+# data
+# ---------------------------------------------------------------------------
+_TOKENS = None
+
 def load_tokens():
-	with open('5k_enwik9', 'rb') as f:
-		data = f.read()
-	tokens = np.frombuffer(data, dtype=np.uint16)
-	return tokens  # keep as numpy array
+	global _TOKENS
+	if _TOKENS is None:                        # cache across sweep runs
+		with open('5k_enwik9', 'rb') as f:
+			data = f.read()
+		_TOKENS = np.frombuffer(data, dtype=np.uint16)
+	return _TOKENS
 
 class DataLoaderLite:
 	def __init__(self, B, T):
@@ -39,6 +77,34 @@ class DataLoaderLite:
 
 		return x, y
 
+class ReplaySampler:
+	"""Samples random windows from tokens[:limit] -- data the decoder has already seen.
+
+	Only ever called with limit == the number of tokens transmitted so far, so nothing
+	here leaks future data into the model. Uses its own RNG so the sampling sequence is
+	reproducible independently of any other use of numpy's global random state.
+	"""
+	def __init__(self, tokens, T, seed):
+		self.tokens = tokens
+		self.T = T
+		self.rng = np.random.default_rng(seed)
+
+	def available(self, limit):
+		return limit - self.T - 1
+
+	def batch(self, n_seq, limit):
+		T = self.T
+		max_start = self.available(limit)          # need x[s:s+T] and y[s+1:s+T+1]
+		starts = self.rng.integers(0, max_start + 1, size=n_seq)
+		x_idx = starts[:, None] + np.arange(T)[None, :]
+
+		x = self.tokens[x_idx]
+		y = self.tokens[x_idx + 1]
+
+		x = torch.from_numpy(x.astype(np.int64))
+		y = torch.from_numpy(y.astype(np.int64))
+		return x, y
+
 device = "cpu"
 if torch.cuda.is_available():
 	device = "cuda"
@@ -46,193 +112,260 @@ print(f"using device: {device}")
 
 device_type = "cuda" if device.startswith("cuda") else "cpu"
 
-total_batch_size = 1 # 2**19, ~0.5M, in number of tokens
-B = 1 # micro batch size
-assert total_batch_size % B == 0, "make sure total_batch_size is divisible by B"
-grad_accum_steps = total_batch_size // B
-print(f"total desired batch size: {total_batch_size}")
-print(f"=> calculated gradient accumulation steps: {grad_accum_steps}")
-
-train_loader = DataLoaderLite(B=B, T=GPTConfig.context_length)
-
 torch.set_float32_matmul_precision('high')
 
-wandb.init(
-	project="hutter",
 
-	config={
-	"architecture": "transformer",
-	"context_length": GPTConfig.context_length,
-	"vocab_size": GPTConfig.vocab_size,
-	"n_layer": GPTConfig.n_layer,
-	"n_head": GPTConfig.n_head,
-	"n_embd": GPTConfig.n_embd,
-	"total_batch_size": total_batch_size,
-	"B": B,
-	"muon_lr": 0.02405482011843835,
-	"wte_lr": 0.06453128852460155,
-	"lm_head_lr": 0.011223604923484058,
-	# "b_lr": 0.06198621925528761,
-	"num_tokens": len(train_loader.tokens)
+def train(config=None):
+	# Under an agent, wandb.init() picks up the sweep's parameters; values swept
+	# override the matching keys in DEFAULTS.
+	run = wandb.init(project="hutter", config=DEFAULTS)
+	config = wandb.config
+
+	K = config.ensemble_k
+	replay_steps = config.replay_steps
+	total_batch_size = config.total_batch_size
+	B = config.B
+	assert total_batch_size % B == 0, "make sure total_batch_size is divisible by B"
+	grad_accum_steps = total_batch_size // B
+	print(f"total desired batch size: {total_batch_size}")
+	print(f"=> calculated gradient accumulation steps: {grad_accum_steps}")
+
+	train_loader = DataLoaderLite(B=B, T=GPTConfig.context_length)
+	replay_sampler = ReplaySampler(train_loader.tokens, GPTConfig.context_length, config.replay_seed)
+	run.config.update({"num_tokens": len(train_loader.tokens)}, allow_val_change=True)
+
+	# -----------------------------------------------------------------------
+	# build K models, each with its own optimizer set
+	# -----------------------------------------------------------------------
+	def build_member(seed: int):
+		torch.manual_seed(seed)
+		raw_model = GPT().to(device)
+		model = torch.compile(raw_model, mode='max-autotune-no-cudagraphs')
+
+		optimizer1 = torch.optim.Adam([raw_model.transformer.wte.weight], lr=config.wte_lr, betas=(0.9, 0.95), fused=True)
+		optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=config.lm_head_lr, betas=(0.9, 0.95), fused=True)
+		w_params = [m.weight for m in raw_model.transformer.h.modules() if isinstance(m, torch.nn.Linear)]
+		b_params = [m.bias for m in raw_model.transformer.h.modules() if isinstance(m, torch.nn.Linear)]
+		optimizer3 = SingleDeviceMuon(w_params, lr=config.muon_lr, momentum=0.95, weight_decay=config.muon_wd)
+		optimizer4 = torch.optim.Adam(b_params, lr=config.b_lr, betas=(0.9, 0.95), fused=True)
+		optimizers = [optimizer1, optimizer2, optimizer3, optimizer4]
+
+		for opt in optimizers:
+			for group in opt.param_groups:
+				group["initial_lr"] = group["lr"]
+
+		return raw_model, model, optimizers
+
+	raw_models, models, optimizer_sets = [], [], []
+	for k in range(K):
+		raw_model, model, optimizers = build_member(seed=k)   # different seed => diverse members
+		raw_models.append(raw_model)
+		models.append(model)
+		optimizer_sets.append(optimizers)
+
+	weight_count = sum(p.numel() for p in raw_models[0].parameters())
+	total_weight_count = weight_count * K
+	print(f"weights per model: {weight_count} | total across ensemble: {total_weight_count}")
+
+	max_steps = len(train_loader.tokens) // (total_batch_size * 1024)
+
+	cooldown_frac = config.cooldown_frac
+	warmup_frac = config.warmup_frac
+	def get_lr(step: int):
+		x = step / max_steps
+		assert 0 <= x < 1
+		if x < warmup_frac:
+			return x / warmup_frac
+		if x > 1 - cooldown_frac:
+			w = (1 - x) / cooldown_frac
+			return w * 1.0 + (1 - w) * 0.1
+		return 1.0
+
+	log_dir = "log"
+	os.makedirs(log_dir, exist_ok=True)
+
+	log_K = math.log(K)
+
+	def token_logprobs(logits, y):
+		"""log p(y_t | x_<t) for every position, shape [B, T]."""
+		V = logits.size(-1)
+		nll = F.cross_entropy(logits.reshape(-1, V).float(), y.flatten(), reduction='none')
+		return -nll.view(y.shape)
+
+	def ensemble_nll(logprob_list):
+		"""NLL of the uniform mixture: -log( (1/K) * sum_k p_k(y) ), averaged over tokens."""
+		stacked = torch.stack(logprob_list, dim=0)             # [K, B, T]
+		mix = torch.logsumexp(stacked, dim=0) - log_K          # [B, T]
+		return -mix.mean(), -mix[:, -1].mean()                 # (all positions, last position)
+
+	def accumulate_micro(x, y, scale):
+		"""Forward all K members on one micro-batch, backward each member's own CE.
+
+		Returns detached (ensemble nll, ensemble nll at last position, mean member nll).
+		`scale` is the gradient-accumulation normaliser (1 / grad_accum_steps).
+		"""
+		member_logprobs = []
+		for model in models:
+			with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+				logits = model(x)
+			lp = token_logprobs(logits, y)
+			(-lp.mean() * scale).backward()        # only touches this member's graph
+			member_logprobs.append(lp.detach())    # values survive the freed graph
+
+		with torch.no_grad():
+			ens_loss, ens_loss_last = ensemble_nll(member_logprobs)
+			member_loss = sum(-lp.mean() for lp in member_logprobs) / K
+		return ens_loss, ens_loss_last, member_loss
+
+	def optimizer_step(step):
+		"""Clip, set LR, step every member, then zero grads. Returns mean grad norm."""
+		norms = []
+		for raw_model, optimizers in zip(raw_models, optimizer_sets):
+			norms.append(torch.nn.utils.clip_grad_norm_(raw_model.parameters(), 100).detach())
+			for opt in optimizers:
+				for group in opt.param_groups:
+					group["lr"] = group["initial_lr"] * get_lr(step)
+				opt.step()
+		for model in models:
+			model.zero_grad(set_to_none=True)
+		return torch.stack(norms).mean()
+
+	ema_loss = None
+	ema_beta = 0.98  # averages over roughly the last 1/(1-beta) ≈ 50 steps
+
+	auc_loss = 0
+
+	for model in models:
+		model.zero_grad(set_to_none=True)
+
+	for step in range(0, max_steps):
+		t0 = time.time()
+
+		# ---- online pass: code the next chunk with the CURRENT weights, then learn from
+		# it. The loss below is measured before any update that uses this chunk, so it is
+		# exactly what an arithmetic coder would pay. These are the only bits that count.
+		prefix_len = train_loader.pos      # tokens the decoder already has, before this chunk
+
+		accum = {
+			"ens_loss": 0.0,
+			"ens_loss_last": 0.0,
+			"mean_member_loss": 0.0,
+			"bits": 0.0,
+		}
+
+		for micro_step in range(grad_accum_steps):
+			x, y = train_loader.next_batch()
+			x, y = x.to(device), y.to(device)
+			ens_loss, ens_loss_last, member_loss = accumulate_micro(x, y, 1.0 / grad_accum_steps)
+			accum["ens_loss"] += ens_loss / grad_accum_steps
+			accum["ens_loss_last"] += ens_loss_last / grad_accum_steps
+			accum["mean_member_loss"] += member_loss / grad_accum_steps
+
+		weight_norm = optimizer_step(step)
+
+		# ---- replay: extra passes over data already transmitted (prefix + the chunk we
+		# just coded). Free in bits -- the decoder can reproduce these updates -- so the
+		# only cost is compute. Losses here are diagnostics, NOT added to auc_loss.
+		replay_len = train_loader.pos if train_loader.pos > prefix_len else len(train_loader.tokens)
+		replay_loss = float('nan')
+		replay_done = 0
+
+		if replay_steps > 0 and replay_sampler.available(replay_len) > 0:
+			for _ in range(replay_steps):
+				r_accum = 0.0
+				for micro_step in range(grad_accum_steps):
+					x, y = replay_sampler.batch(B, replay_len)
+					x, y = x.to(device), y.to(device)
+					ens_loss, _, _ = accumulate_micro(x, y, 1.0 / grad_accum_steps)
+					r_accum += ens_loss / grad_accum_steps
+				optimizer_step(step)
+				replay_loss = r_accum.item()
+				replay_done += 1
+
+		torch.cuda.synchronize() # wait for the GPU to finish work
+		t1 = time.time()
+		dt = t1 - t0 # time difference in seconds
+		seq_processed = train_loader.B * grad_accum_steps * (1 + replay_done)
+		seq_per_sec = seq_processed / dt
+
+		step_loss = accum["ens_loss"].item()      # <- the number that matters: ensembled loss
+		member_loss = accum["mean_member_loss"].item()
+
+		print(f"step {step:5d} | ens_loss: {step_loss:.6f} | mean_member: {member_loss:.6f} | "
+		      f"replay: {replay_loss:.6f} | lr {get_lr(step):.4e} | dt: {dt*1000:.2f}ms | "
+		      f"seq/sec: {seq_per_sec:.2f}")
+
+		ema_loss = step_loss if ema_loss is None else ema_beta * ema_loss + (1 - ema_beta) * step_loss
+		auc_loss += (step_loss * np.log2(np.e) * 1024 * total_batch_size) / 8
+
+		wandb.log({
+			"loss": step_loss,
+			"ema_loss": ema_loss,
+			"mean_member_loss": member_loss,
+			"ensemble_gain": member_loss - step_loss,
+			"replay_loss": replay_loss,
+			"replay_generalization_gap": step_loss - replay_loss,
+			"prefix_len": prefix_len,
+			# "bits_per_weight": accum["bits"]/total_weight_count,
+			"lr": get_lr(step),
+			"weight_norm": weight_norm,
+			"last_loss": accum["ens_loss_last"].item(),
+			'step': step,
+			'dt': dt*1000,
+			"tokens": step*1024*total_batch_size,
+			"auc_loss": auc_loss
+		})
+
+	# Summary metrics are what the sweep optimises against -- one scalar per run,
+	# rather than whatever value happened to be logged last.
+	run.summary["final_auc_loss"] = auc_loss
+	run.summary["final_ema_loss"] = ema_loss
+	run.summary["compute_units"] = K * (1 + replay_steps)
+
+	# optional checkpointing of the whole ensemble
+	# checkpoint = {
+	# 	'models': [m.state_dict() for m in raw_models],
+	# 	'optimizers': [[o.state_dict() for o in opts] for opts in optimizer_sets],
+	# 	'config': GPTConfig,
+	# 	'step': step,
+	# }
+	# torch.save(checkpoint, os.path.join(log_dir, f"ensemble_{step:05d}.pt"))
+
+	run.finish()
+
+	# Sweeps run many models back to back in one process: drop everything and reset
+	# dynamo, or compiled graphs and optimizer state pile up until you OOM.
+	del raw_models, models, optimizer_sets
+	gc.collect()
+	torch._dynamo.reset()
+	if device_type == "cuda":
+		torch.cuda.empty_cache()
+
+
+sweep_config = {
+	'method': 'bayes',
+	'metric': {
+		'name': 'final_auc_loss',   # prequential bits: the actual objective
+		'goal': 'minimize'
+	},
+	'parameters': {
+		'muon_lr': {'distribution': 'uniform', 'min': 0.0, 'max': 0.03082128076593258*5},
+		'wte_lr': {'distribution': 'uniform', 'min': 0.0, 'max': 0.19020436245909905*5},
+		'lm_head_lr': {'distribution': 'uniform', 'min': 0.0, 'max': 0.00631756779266*5},
+		'b_lr': {'distribution': 'uniform', 'min': 0.0, 'max': 0.006544112966520484*5},
+		'muon_wd': {'distribution': 'uniform', 'min': 0.0, 'max': 0.004871610681529271*5},
+		# 'cooldown_frac': {'distribution': 'uniform', 'min': 0.0, 'max': 0.4},
+		# Sweeping these changes the compute budget, so runs stop being comparable on
+		# loss alone. Fix them per sweep and compare sweeps at equal K*(1+R) instead.
+		# 'ensemble_k': {'values': [1, 2, 4]},
+		# 'replay_steps': {'values': [0, 1, 3]},
 	}
-)
+}
 
-# def train():
-torch.manual_seed(0)
-# wandb.init(project='hutter')
-config = wandb.config
-raw_model = GPT()
-
-# Load the checkpoint once so we can pull both model weights and (if present)
-# optimizer state out of the same file.
-# checkpoint = torch.load('log/laced-microwave-5555.pt', weights_only=False)
-# raw_model.load_state_dict(checkpoint['model'])
-raw_model = raw_model.to(device)
-model = torch.compile(raw_model, mode='max-autotune-no-cudagraphs')
-
-weight_count = sum(p.numel() for p in model.parameters())
-print(weight_count)
-
-# max_steps = len(train_loader.tokens) // (total_batch_size * 1024)
-max_steps = 5000
-
-cooldown_frac = 0.0
-warmup_frac = 0.0
-def get_lr(step: int):
-	x = step / max_steps
-	assert 0 <= x < 1
-	if x < warmup_frac:
-		return x / warmup_frac
-	if x > 1 - cooldown_frac:
-		w = (1 - x) / cooldown_frac
-		return w * 1.0 + (1 - w) * 0.1
-	return 1.0
-
-optimizer1 = torch.optim.Adam([raw_model.transformer.wte.weight], lr=config.wte_lr, betas=(0.9, 0.95), fused=True)
-optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=config.lm_head_lr, betas=(0.9, 0.95), fused=True)
-w_params = [m.weight for m in raw_model.transformer.h.modules() if isinstance(m, torch.nn.Linear)]
-# b_params = [m.bias for m in raw_model.transformer.h.modules() if isinstance(m, torch.nn.Linear)]
-optimizer3 = SingleDeviceMuon(w_params, lr=config.muon_lr, momentum=0.95, weight_decay=0.1)
-# optimizer4 = torch.optim.Adam(b_params, lr=config.b_lr, betas=(0.9, 0.95), fused=True)
-optimizers = [optimizer1, optimizer2, optimizer3]
-
-# If the checkpoint we resumed from has optimizer state (it won't the first
-# time you run this against an old checkpoint that predates this change),
-# load it into each optimizer in the same order they were created/saved.
-# for opt, state in zip(optimizers, checkpoint['optimizers']):
-	# opt.load_state_dict(state)
-
-# for group in optimizer1.param_groups:
-# 	group["lr"] = config.wte_lr
-# for group in optimizer2.param_groups:
-# 	group["lr"] = config.lm_head_lr
-# for group in optimizer3.param_groups:
-# 	group["lr"] = config.muon_lr
-# for group in optimizer4.param_groups:
-# 	group["lr"] = config.b_lr
-
-for opt in optimizers:
-	for group in opt.param_groups:
-		group["initial_lr"] = group["lr"]
-
-log_dir = "log"
-os.makedirs(log_dir, exist_ok=True)
-
-ema_loss = None
-ema_beta = 0.98  # averages over roughly the last 1/(1-beta) ≈ 50 steps
-
-for step in range(0, max_steps):
-	t0 = time.time()
-
-	# once in a while evaluate our validation loss
-	# if step == (max_steps - 1) or step % 500 == 0:
-	# 	# optionally write model checkpoints
-	# 	checkpoint_path = os.path.join(log_dir, f"model_{step:05d}.pt")
-	# 	checkpoint = {
-	# 		'model': raw_model.state_dict(),
-	# 		'config': model.config,
-	# 		'step': step,
-	# 		'optimizers': [opt.state_dict() for opt in optimizers],
-	# 	}
-		# you might also want to add rng seeds etc., if you wanted to more
-		# exactly resume training
-		# torch.save(checkpoint, checkpoint_path)
-		# total_bits = 0
-		# for m in raw_model.modules():
-		# 	if isinstance(m, (torch.nn.Linear, torch.nn.Embedding)):
-		# 		bits = lzma.compress(m.weight.cpu().detach().numpy())
-		# 		total_bits += len(bits)
-		# wandb.log({'lzma_bits': total_bits})
-
-	model.zero_grad(set_to_none=True)
-	accum = {
-		"loss": 0.0,
-		"loss_last": 0.0,
-		"ce_loss": 0.0,
-		"bits": 0.0,
-	}
-	for micro_step in range(grad_accum_steps):
-		x, y = train_loader.next_batch()
-		x, y = x.to(device), y.to(device)
-		# added after video, this field is also used by the forward pass.
-		with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-			logits = model(x)
-		loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), y.flatten(), ignore_index=-1)
-		ce_loss = loss.detach()
-		# bits = sum([m.get_bits() for m in model.modules() if isinstance(m, (Quantized_Linear, Quantized_Embedding))])
-		loss_last = F.cross_entropy(logits[:, -1, :].reshape(-1, logits.size(-1)), y[:, -1].view(-1), ignore_index=-1)
-		# loss = (len(train_loader.tokens) * loss * np.log2(np.e) + bits)/(8*10**8)
-		loss = loss / grad_accum_steps
-		ce_loss = ce_loss / grad_accum_steps
-		loss_last = loss_last / grad_accum_steps
-
-		accum["loss"] += loss.detach()
-		accum["ce_loss"] += ce_loss
-		accum["loss_last"] += loss_last.detach()
-		# accum["bits"] += bits / grad_accum_steps
-
-		loss.backward()
-	weight_norm = torch.nn.utils.clip_grad_norm_(raw_model.parameters(), 100)
-	for opt in optimizers:
-		for group in opt.param_groups:
-			group["lr"] = group["initial_lr"] * get_lr(step)
-
-	for opt in optimizers:
-		opt.step()
-	torch.cuda.synchronize() # wait for the GPU to finish work
-	t1 = time.time()
-	dt = t1 - t0 # time difference in seconds
-	seq_processed = train_loader.B * grad_accum_steps
-	seq_per_sec = seq_processed / dt
-	print(f"step {step:5d} |loss: {accum['loss'].item():.6f} | lr {get_lr(step):.4e} | dt: {dt*1000:.2f}ms | seq/sec: {seq_per_sec:.2f}")
-
-	step_loss = accum["ce_loss"].item()
-	ema_loss = step_loss if ema_loss is None else ema_beta * ema_loss + (1 - ema_beta) * step_loss
-
-	wandb.log({
-		"loss": step_loss,
-		"ema_loss": ema_loss,
-		"bytes": (len(train_loader.tokens) * step_loss * np.log2(np.e) + accum["bits"])/8,
-		"bits_per_weight": accum["bits"]/weight_count,
-		"lr": get_lr(step),
-		"weight_norm": weight_norm,
-		"last_loss": accum["loss_last"].item(),
-		'step': step,
-		'dt': dt*1000,
-	})
-
-# sweep_config = {
-#     'method': 'bayes',
-#     'metric': {
-#         'name': 'ema_loss',
-#         'goal': 'minimize'
-#     },
-#     'parameters': {
-#         'muon_lr': {'distribution': 'uniform', 'min': 0.0, 'max': 0.03082128076593258*5},
-#         'wte_lr': {'distribution': 'uniform', 'min': 0.0, 'max': 0.19020436245909905*5},
-#         'lm_head_lr': {'distribution': 'uniform', 'min': 0.0, 'max': 0.00631756779266*5},
-#     }
-#     }
-
-# sweep_id = wandb.sweep(sweep_config, project="hutter")
-# wandb.agent(sweep_id, train)
+if __name__ == "__main__":
+	if SWEEP:
+		sweep_id = SWEEP_ID or wandb.sweep(sweep_config, project="hutter")
+		print(f"sweep id: {sweep_id}")
+		wandb.agent(sweep_id, train, count=SWEEP_COUNT, project="hutter")
+	else:
+		train()

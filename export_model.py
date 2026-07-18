@@ -25,25 +25,25 @@ device = torch.device('cuda')
 
 model = torch.load('log/model_22000.pt', map_location=torch.device('cpu'), weights_only=False)['model']
 weight = model['transformer.h.6.mlp.c_fc.weight']
-bits = model['transformer.h.6.mlp.c_fc.b']
+# bits = model['transformer.h.6.mlp.c_fc.b']
 
-b = bits.clip(0, 16)
-s = (3*weight.std())/(2**(b-1))
-s = s.clamp_min(1e-8)
-q = weight / s
-qmax = 2**(b-1) - 1
-qmin = -(2**(b-1))
-q_clamped = q.round().clamp(qmin, qmax)
+# b = bits.clip(0, 16)
+# s = (3*weight.std())/(2**(b-1))
+# s = s.clamp_min(1e-8)
+# q = weight / s
+# qmax = 2**(b-1) - 1
+# qmin = -(2**(b-1))
+# q_clamped = q.round().clamp(qmin, qmax)
 # w = (q_clamped - q).detach() + q   # STE, now with clamped forward value
 # w = w * s
 
-print(torch.mean(b))
+# print(torch.mean(b))
 
-print(q_clamped.shape)
-a = lzma.compress(q_clamped.numpy())
-print(len(a))
+# print(q_clamped.shape)
+# a = lzma.compress(q_clamped.numpy())
+# print(len(a))
 
-plt.imshow(q_clamped)
+plt.imshow(weight)
 plt.show()
 
 # plt.hist(q_clamped.flatten(), 100)
