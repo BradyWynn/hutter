@@ -14,7 +14,7 @@ from muon import SingleDeviceMuon
 # run mode
 # ---------------------------------------------------------------------------
 SWEEP = False          # False: one run using DEFAULTS. True: launch/join a wandb sweep.
-SWEEP_COUNT = 100       # runs for this agent to execute
+SWEEP_COUNT = 10000       # runs for this agent to execute
 SWEEP_ID = None        # set to an existing sweep id to join it instead of creating one
 
 # Defaults for a single run. Under a sweep, wandb overrides the swept keys.
@@ -28,13 +28,13 @@ DEFAULTS = {
 	"n_layer": GPTConfig.n_layer,
 	"n_head": GPTConfig.n_head,
 	"n_embd": GPTConfig.n_embd,
-	"total_batch_size": 32,   # in sequences, not tokens
+	"total_batch_size": 4,   # in sequences, not tokens
 	"B": 4,                   # micro batch size
-	"muon_lr": 0.09162826608428096,
-	"wte_lr": 0.8852204383983739,
-	"lm_head_lr": 0.00379678184918,
-	"b_lr": 0.029088727454488157,
-	"muon_wd": 0.00007242467972267174,
+	"muon_lr": 0.03530142167198156,
+	"wte_lr": 1.3135687240595386,
+	"lm_head_lr": 0.000248583665912,
+	"b_lr": 0.02088101953753996,
+	"muon_wd": 0.0,
 	"cooldown_frac": 0.0,
 	"warmup_frac": 0.0,
 }
@@ -137,17 +137,25 @@ def train(config=None):
 	# -----------------------------------------------------------------------
 	# build K models, each with its own optimizer set
 	# -----------------------------------------------------------------------
+	model_config = GPTConfig(
+		context_length=config.context_length,
+		vocab_size=config.vocab_size,
+		n_layer=config.n_layer,
+		n_head=config.n_head,
+		n_embd=config.n_embd,
+	)
+
 	def build_member(seed: int):
 		torch.manual_seed(seed)
-		raw_model = GPT().to(device)
+		raw_model = GPT(model_config).to(device)
 		model = torch.compile(raw_model, mode='max-autotune-no-cudagraphs')
 
-		optimizer1 = torch.optim.Adam([raw_model.transformer.wte.weight], lr=config.wte_lr, betas=(0.9, 0.95), fused=True)
-		optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=config.lm_head_lr, betas=(0.9, 0.95), fused=True)
+		optimizer1 = torch.optim.Adam([raw_model.transformer.wte.weight], lr=config.wte_lr, betas=(0.0, 0.999), fused=True)
+		optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=config.lm_head_lr, betas=(0.0, 0.999), fused=True)
 		w_params = [m.weight for m in raw_model.transformer.h.modules() if isinstance(m, torch.nn.Linear)]
 		b_params = [m.bias for m in raw_model.transformer.h.modules() if isinstance(m, torch.nn.Linear)]
 		optimizer3 = SingleDeviceMuon(w_params, lr=config.muon_lr, momentum=0.95, weight_decay=config.muon_wd)
-		optimizer4 = torch.optim.Adam(b_params, lr=config.b_lr, betas=(0.9, 0.95), fused=True)
+		optimizer4 = torch.optim.Adam(b_params, lr=config.b_lr, betas=(0.0, 0.999), fused=True)
 		optimizers = [optimizer1, optimizer2, optimizer3, optimizer4]
 
 		for opt in optimizers:
@@ -198,14 +206,20 @@ def train(config=None):
 		mix = torch.logsumexp(stacked, dim=0) - log_K          # [B, T]
 		return -mix.mean(), -mix[:, -1].mean()                 # (all positions, last position)
 
-	def accumulate_micro(x, y, scale):
-		"""Forward all K members on one micro-batch, backward each member's own CE.
+	def accumulate_micro(xy_per_model, scale):
+		"""Forward each of the K members on its own (x, y) micro-batch, backward each
+		member's own CE. `xy_per_model` is a list of K (x, y) pairs -- pass the same
+		pair K times to give every member an identical batch, or K different pairs to
+		diversify what each member sees (as replay does).
 
 		Returns detached (ensemble nll, ensemble nll at last position, mean member nll).
 		`scale` is the gradient-accumulation normaliser (1 / grad_accum_steps).
+
+		Note: the "ensemble nll" mixture is only meaningful when every member is scored
+		against the same targets -- with diversified batches, use mean member nll instead.
 		"""
 		member_logprobs = []
-		for model in models:
+		for model, (x, y) in zip(models, xy_per_model):
 			with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
 				logits = model(x)
 			lp = token_logprobs(logits, y)
@@ -221,7 +235,7 @@ def train(config=None):
 		"""Clip, set LR, step every member, then zero grads. Returns mean grad norm."""
 		norms = []
 		for raw_model, optimizers in zip(raw_models, optimizer_sets):
-			norms.append(torch.nn.utils.clip_grad_norm_(raw_model.parameters(), 100).detach())
+			norms.append(torch.nn.utils.clip_grad_norm_(raw_model.parameters(), 1).detach())
 			for opt in optimizers:
 				for group in opt.param_groups:
 					group["lr"] = group["initial_lr"] * get_lr(step)
@@ -256,7 +270,7 @@ def train(config=None):
 		for micro_step in range(grad_accum_steps):
 			x, y = train_loader.next_batch()
 			x, y = x.to(device), y.to(device)
-			ens_loss, ens_loss_last, member_loss = accumulate_micro(x, y, 1.0 / grad_accum_steps)
+			ens_loss, ens_loss_last, member_loss = accumulate_micro([(x, y)] * K, 1.0 / grad_accum_steps)
 			accum["ens_loss"] += ens_loss / grad_accum_steps
 			accum["ens_loss_last"] += ens_loss_last / grad_accum_steps
 			accum["mean_member_loss"] += member_loss / grad_accum_steps
@@ -274,10 +288,18 @@ def train(config=None):
 			for _ in range(replay_steps):
 				r_accum = 0.0
 				for micro_step in range(grad_accum_steps):
-					x, y = replay_sampler.batch(B, replay_len)
-					x, y = x.to(device), y.to(device)
-					ens_loss, _, _ = accumulate_micro(x, y, 1.0 / grad_accum_steps)
-					r_accum += ens_loss / grad_accum_steps
+					# each member gets its own randomly sampled replay window, rather
+					# than all members seeing the same window -- diversifies what the
+					# ensemble sees during replay. Still fully reproducible: the
+					# per-model batches are drawn in a fixed order from the seeded RNG.
+					xy_per_model = []
+					for _ in range(K):
+						xr, yr = replay_sampler.batch(B, replay_len)
+						xy_per_model.append((xr.to(device), yr.to(device)))
+					# ensemble nll isn't meaningful across mismatched targets, so use
+					# mean member nll as the replay diagnostic instead.
+					_, _, member_loss = accumulate_micro(xy_per_model, 1.0 / grad_accum_steps)
+					r_accum += member_loss / grad_accum_steps
 				optimizer_step(step)
 				replay_loss = r_accum.item()
 				replay_done += 1
@@ -349,11 +371,11 @@ sweep_config = {
 		'goal': 'minimize'
 	},
 	'parameters': {
-		'muon_lr': {'distribution': 'uniform', 'min': 0.0, 'max': 0.03082128076593258*5},
-		'wte_lr': {'distribution': 'uniform', 'min': 0.0, 'max': 0.19020436245909905*5},
-		'lm_head_lr': {'distribution': 'uniform', 'min': 0.0, 'max': 0.00631756779266*5},
-		'b_lr': {'distribution': 'uniform', 'min': 0.0, 'max': 0.006544112966520484*5},
-		'muon_wd': {'distribution': 'uniform', 'min': 0.0, 'max': 0.004871610681529271*5},
+		'muon_lr': {'distribution': 'uniform', 'min': 0.0, 'max': 0.08},
+		'wte_lr': {'distribution': 'uniform', 'min': 0.0, 'max': 1.0},
+		'lm_head_lr': {'distribution': 'uniform', 'min': 0.0, 'max': 0.01},
+		'b_lr': {'distribution': 'uniform', 'min': 0.0, 'max': 0.03},
+		# 'muon_wd': {'distribution': 'uniform', 'min': 0.0, 'max': 0.029088727454488157*5},
 		# 'cooldown_frac': {'distribution': 'uniform', 'min': 0.0, 'max': 0.4},
 		# Sweeping these changes the compute budget, so runs stop being comparable on
 		# loss alone. Fix them per sweep and compare sweeps at equal K*(1+R) instead.
