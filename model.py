@@ -13,9 +13,9 @@ import matplotlib.pyplot as plt
 class GPTConfig:
 	context_length: int = 1024
 	vocab_size: int = 5256
-	n_layer: int = 12
-	n_head: int = 12
-	n_embd: int = 768
+	n_layer: int = 24
+	n_head: int = 16
+	n_embd: int = 1024
 
 	@property
 	def head_n_embd(self):
@@ -77,74 +77,6 @@ def apply_rotary_emb(x, cos, sin):
 	y1 = x1 * cos + x2 * sin
 	y2 = x1 * (-sin) + x2 * cos
 	return torch.cat([y1, y2], 3).type_as(x)
-
-class Quantized_Linear(nn.Module):
-	def __init__(
-		self,
-		in_features: int,
-		out_features: int,
-		device=None,
-		dtype=None,
-	) -> None:
-		factory_kwargs = {"device": device, "dtype": dtype}
-		super().__init__()
-		self.in_features = in_features
-		self.out_features = out_features
-		self.weight = nn.Parameter(torch.empty((out_features, in_features), **factory_kwargs))
-		self.b = nn.Parameter(torch.ones((out_features, 1), **factory_kwargs) * 16.)
-		self.reset_parameters()
-
-	def get_bits(self):
-		return self.b.clip(0, 16).expand_as(self.weight).sum()
-	
-	def reset_parameters(self) -> None:
-		nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
-
-	def forward(self, x: Tensor) -> Tensor:
-		b = self.b.clip(0, 16)
-		s = (3*self.weight.std())/(2**(b-1))
-		s = s.clamp_min(1e-8)
-		q = self.weight / s
-		qmax = 2**(b-1) - 1
-		qmin = -(2**(b-1))
-		q_clamped = q.round().clamp(qmin, qmax)
-		w = (q_clamped - q).detach() + q   # STE, now with clamped forward value
-		w = w * s
-		return F.linear(x, w)
-	
-class Quantized_Embedding(nn.Module):
-	def __init__(
-		self,
-		num_embeddings: int,
-		embedding_dim: int,
-		device=None,
-		dtype=None,
-	) -> None:
-		factory_kwargs = {"device": device, "dtype": dtype}
-		super().__init__()
-		self.num_embeddings = num_embeddings
-		self.embedding_dim = embedding_dim
-		self.weight = nn.Parameter(torch.empty((num_embeddings, embedding_dim), **factory_kwargs))
-		self.b = nn.Parameter(torch.ones((num_embeddings, 1), **factory_kwargs) * 16.)
-		self.reset_parameters()
-
-	def get_bits(self):
-		return self.b.clip(0, 16).expand_as(self.weight).sum()
-	
-	def reset_parameters(self) -> None:
-		nn.init.normal_(self.weight)
-
-	def forward(self, x: Tensor) -> Tensor:
-		b = self.b.clip(0, 16)
-		s = (3*self.weight.std())/(2**(b-1))
-		s = s.clamp_min(1e-8)
-		q = self.weight / s
-		qmax = 2**(b-1) - 1
-		qmin = -(2**(b-1))
-		q_clamped = q.round().clamp(qmin, qmax)
-		w = (q_clamped - q).detach() + q   # STE, now with clamped forward value
-		w = w * s
-		return F.embedding(x, w)
 
 class FeedForward(nn.Module):
 	def __init__(self, config: GPTConfig) -> None:
@@ -220,34 +152,6 @@ class GPT(nn.Module):
 
 		causal_mask = torch.tril(torch.ones(config.context_length, config.context_length, dtype=torch.bool)).view(1, 1, config.context_length, config.context_length)
 		self.register_buffer('causal_mask', causal_mask)
-
-	def load_weights(self, checkpoint_path, device="cpu"):
-		state = torch.load(checkpoint_path, weights_only=False, map_location=device)['model']
-
-		model_state = self.state_dict()
-
-		for name, module in self.named_modules():
-			if isinstance(module, (Quantized_Linear, Quantized_Embedding)):
-				weight_key = f"{name}.weight"
-				if weight_key in state and weight_key in model_state:
-					if state[weight_key].shape == model_state[weight_key].shape:
-						model_state[weight_key].copy_(state[weight_key])
-
-		self.load_state_dict(model_state)
-
-	def load_masks(self, checkpoint_path, device="cpu"):
-		state = torch.load(checkpoint_path, weights_only=False, map_location=device)['model']
-
-		model_state = self.state_dict()
-
-		for name, module in self.named_modules():
-			if isinstance(module, (Quantized_Linear, Quantized_Embedding)):
-				mask_key = f"{name}.z"
-				if mask_key in state and mask_key in model_state:
-					if state[mask_key].shape == model_state[mask_key].shape:
-						model_state[mask_key].copy_(state[mask_key])
-
-		self.load_state_dict(model_state)
 
 	def setup_caches(self, max_batch_size, max_seq_length):
 		max_seq_length = find_multiple(max_seq_length, 8)

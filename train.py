@@ -5,7 +5,7 @@ import time
 import torch
 from torch.nn import functional as F
 import numpy as np
-from model import GPT, GPTConfig, Quantized_Linear, Quantized_Embedding
+from model import GPT, GPTConfig
 import wandb
 from muon import SingleDeviceMuon
 # import lzma
@@ -32,7 +32,7 @@ DEFAULTS = {
 	"B": 4,                   # micro batch size
 	"muon_lr": 0.03530142167198156,
 	"wte_lr": 1.3135687240595386,
-	"lm_head_lr": 0.000248583665912,
+	"lm_head_lr": 0.000186437749434,
 	"b_lr": 0.02088101953753996,
 	"muon_wd": 0.0,
 	"cooldown_frac": 0.0,
