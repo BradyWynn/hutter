@@ -88,21 +88,43 @@ class Muon(torch.optim.Optimizer):
 class SingleDeviceMuon(torch.optim.Optimizer):
     """
     Muon variant for usage in non-distributed settings.
+
+    Same update as the reference implementation, but matrices of identical shape are stacked and
+    orthogonalized in one batched Newton-Schulz call instead of one call each. Newton-Schulz cost is
+    per optimizer step and independent of batch size, so in a prequential loop -- which steps every
+    few thousand tokens rather than every few hundred thousand -- it is a large fraction of the
+    total, and the individual matmuls are small enough to be launch-bound. `ns_steps` is exposed for
+    the same reason: dropping 5 -> 3 is a straight ~1.6x on the orthogonalization.
     """
-    def __init__(self, params, lr=0.02, weight_decay=0, momentum=0.95):
-        defaults = dict(lr=lr, weight_decay=weight_decay, momentum=momentum)
+    def __init__(self, params, lr=0.02, weight_decay=0, momentum=0.95, ns_steps=5):
+        defaults = dict(lr=lr, weight_decay=weight_decay, momentum=momentum, ns_steps=ns_steps)
         super().__init__(params, defaults)
 
     @torch.no_grad()
     def step(self):
         for group in self.param_groups:
+            lr, wd, beta = group["lr"], group["weight_decay"], group["momentum"]
+            buckets = {}
             for p in group["params"]:
-                state = self.state[p]
-                if len(state) == 0:
-                    state["momentum_buffer"] = torch.zeros_like(p)
-                update = muon_update(p.grad, state["momentum_buffer"], beta=group["momentum"])
-                p.mul_(1 - group["lr"] * group["weight_decay"])
-                p.add_(update, alpha=-group["lr"])
+                if p.grad is not None:
+                    buckets.setdefault(tuple(p.shape), []).append(p)
+            for shape, params in buckets.items():
+                grads = [p.grad for p in params]
+                bufs = []
+                for p in params:
+                    state = self.state[p]
+                    if len(state) == 0:
+                        state["momentum_buffer"] = torch.zeros_like(p)
+                    bufs.append(state["momentum_buffer"])
+                # momentum.lerp_(grad, 1-beta); update = grad.lerp_(momentum, beta)  [nesterov]
+                torch._foreach_lerp_(bufs, grads, 1 - beta)
+                torch._foreach_lerp_(grads, bufs, beta)
+                update = zeropower_via_newtonschulz5(torch.stack(grads), steps=group["ns_steps"])
+                update *= max(1, shape[-2] / shape[-1])**0.5
+                update = update.to(params[0].dtype)
+                if wd:
+                    torch._foreach_mul_(params, 1 - lr * wd)
+                torch._foreach_add_(params, list(update.unbind(0)), alpha=-lr)
 
 
 def adam_update(grad, buf1, buf2, step, betas, eps):
