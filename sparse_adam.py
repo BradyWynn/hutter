@@ -53,6 +53,11 @@ class SparseRowAdam(torch.optim.Optimizer):
 
                 # idx is unique after coalesce, so this scatter has no accumulation conflict and
                 # is deterministic -- which the decoder depends on.
-                p.index_add_(0, idx, update, alpha=-lr)
+                # The cast matters when the table is stored below fp32: the update is computed
+                # in fp32 and rounded once, on the way in. Safe here only because this table's
+                # updates run ~18% of row magnitude (ngram_lr=1.0 with Adam normalising), so
+                # almost nothing is lost to rounding -- 0.18% of coordinates in fp16. It would
+                # NOT be safe for a normally-parameterised weight.
+                p.index_add_(0, idx, update.to(p.dtype), alpha=-lr)
                 state["v"][idx] = v.to(state["v"].dtype)
                 state["seen"][idx] = t

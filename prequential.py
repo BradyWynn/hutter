@@ -62,6 +62,36 @@ DEFAULTS = {
 	"n_layer": GPTConfig.n_layer,
 	"n_head": GPTConfig.n_head,
 	"n_embd": GPTConfig.n_embd,
+	# Residual-branch scaling and the boundary operator (arXiv 2609.19107). Measured at
+	# n_layer=6 against baseline 126.46 MB (run 9k9imqxz, config-matched):
+	#   scale_mlp=True                       126.02  (-0.44)  <- kept, now the default
+	#   bo_alpha=1.0, prelude/coda = 2/2     127.64  (+1.18)  <- lost badly
+	#
+	# Three-way, which pins down what is actually doing the work (attn scale, mlp scale):
+	#   (0.289, 1.0  )  126.46   the long-standing asymmetric default
+	#   (1.0,   1.0  )  126.45   no scaling anywhere -- indistinguishable from the above
+	#   (0.289, 0.289)  126.02   both damped                                <- kept
+	#
+	# So attn_scale is inert: damping attention 3.5x moves the payload 0.01 MB. The whole win
+	# is damping the MLP branch, and it is neither a symmetry effect nor a total-magnitude
+	# effect -- if it were total magnitude the asymmetric arm would sit between the other two,
+	# and it does not. Useful side effect: two genuinely different configs landing 0.01 MB
+	# apart bounds run-to-run spread well below the 0.44 MB being claimed.
+	#
+	# The open knob is therefore the mlp scale's VALUE. 0.289 is 1/sqrt(2L) inherited from a
+	# constant that turns out not to matter on the branch it was written for, so it is an
+	# arbitrary setting of the one thing that does matter, and it drifts with depth.
+	#
+	# The boundary operator is a fair test of dropping it in, not of the paper's claim. They
+	# fit a separate compute-optimal recipe per architecture and report that transferring the
+	# vanilla recipe to Operator-1 "erases its exponent improvement" -- which is exactly what
+	# was done here, reusing the baseline LRs with an untuned alpha=1.0 and an untuned 2/2/2
+	# split. Their gain is also an exponent change across a ladder to 1e20 FLOPs, which one
+	# point on one small model cannot confirm or refute.
+	"scale_mlp": GPTConfig.scale_mlp,
+	"bo_alpha": GPTConfig.bo_alpha,
+	"bo_prelude": GPTConfig.bo_prelude,
+	"bo_coda": GPTConfig.bo_coda,
 	# streaming shape. batch*chunk*accum tokens between optimizer steps; keep that product equal
 	# to train.py's total_batch_size*1024 to stay on the same LR scale.
 	#
@@ -87,6 +117,7 @@ DEFAULTS = {
 	#   orders      (2,3) 129.00 | (2,3,4) 129.01 | (2,3,4,6) 130.22 | (2,3,16) 130.45
 	#   row split   shared 129.00 | (1,1) 128.88 | (7,3) 129.28 | bigram-only 131.21
 	#   table_dim   8Mx256 129.00 | 8Mx64 132.74 | 32Mx64 131.56
+	#   heads       1 129.37 | 2 128.80 | 4 128.97   (4M rows, budget-matched; see ngram_heads)
 	#
 	# The three structural variants (split, longer orders, narrow rows + projection) were built,
 	# measured and removed. A row holds a learned representation rather than a count, so width is
@@ -103,7 +134,24 @@ DEFAULTS = {
 	# session. 4M peaks near 7.5 GB and leaves real headroom. Rows are sublinear anyway
 	# (2M 131.16 | 8M 129.00 at n_layer=3), so this costs roughly 1 MB. Check free VRAM before
 	# raising it, and do not raise it on a machine whose GPU is also driving a display.
-	"ngram_rows": 4_000_000,   # 0 -> disabled
+	# Prime, not 4M flat, on the theory that torch.remainder(h, n_rows) folds any structure
+	# surviving the splitmix finalizer modulo n_rows' factors, and 4e6 = 2^8 * 5^6 is about as
+	# composite as a number that size gets. Measured on 4M tokens: it makes no difference.
+	# Distinct n-grams -> distinct rows, 4e6 vs the prime: order 2 collides 9.357% vs 9.337%,
+	# order 3 20.609% vs 20.645%. Both moduli land on the ideal-random-hash prediction
+	# M(1-e^-n/M) -- order 3 expects 1,527,600 rows hit and gets 1,528,186. The finalizer is
+	# already doing the work; the modulus never sees structure to fold. Kept because it costs
+	# 29 rows and stays correct if the finalizer is ever changed, but do not expect a win.
+	# Paired with ngram_table_fp16: fp16 halves the weight, so this is 3.84 GB of table where
+	# 2M fp32 was 2.88 and the 4M fp32 that OOM'd at n_layer=12 was 5.75. Twice the rows for
+	# ~1 GB more than the configuration that already fit.
+	#
+	# NOT the measured optimum: 6M fp16 won by 0.50 MB at n_layer=6, but that is 5.77 GB, i.e.
+	# right back at the footprint that OOM'd. Raise this to 5_999_993 if the memory ceiling at
+	# n_layer=12 turns out to be compile's autotune workspace rather than the table -- a bare
+	# forward/backward there peaks at 8.3 GB of 15.46, so the steady state is not the problem.
+	# PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True is the cheap thing to try first.
+	"ngram_rows": 3_999_971,   # 0 -> disabled
 	"ngram_orders": (2, 3),    # hash widths; (2,3) == the PR's bigram + trigram channels
 	"ngram_lr": 1.0,
 	# Width of a stored row; 0 -> n_embd. Pin it to hold table memory fixed while n_embd grows:
@@ -111,7 +159,82 @@ DEFAULTS = {
 	# Depth is the wrong axis here -- 256/6 is width:depth 43 against GPT-2's 64 and GPT-3's 128,
 	# and doubling depth bought only 1.82 MB, uniformly across the stream rather than late.
 	"ngram_row_dim": 0,
+	# Hash heads per order (Engram eq. 1-2): K independently-salted lookups of width row_dim/K,
+	# concatenated. Budget-invariant in K by construction (K partitions of ngram_rows at
+	# row_dim/K), so this A/Bs against heads=1 with nothing else moved.
+	#
+	# Buys collision redundancy: a context has to collide in ALL K heads to be indistinguishable.
+	# Measured on 4M tokens, distinct n-grams -> distinct row signatures: order 3 collides 20.66%
+	# at K=1 and 0.000% at K=2 -- two independent hashes into 4M rows each expect ~0.1 colliding
+	# pairs in the entire table, so K=2 does not reduce collisions, it ends them. What it pays is
+	# the width of each retrieved block, the resource table_dim says is scarce.
+	#
+	# The curve is U-shaped and bottoms where collisions vanish:
+	#   K=1  width 256  20.66% collided  129.37 MB
+	#   K=2  width 128   0.000%          128.80 MB   <- best
+	#   K=4  width  64   0.000%          128.97 MB
+	# Past K=2 there is no aliasing left to buy, so the narrower blocks are paid for with nothing
+	# in return. That gives a rule worth reusing: pick the SMALLEST K at which the offline
+	# collision count hits zero. That measurement is a unique() over hashed n-grams on a token
+	# sample -- seconds, no training -- so K never needs sweeping.
+	#
+	# This also sharpens table_dim rather than contradicting it. What is scarce is the width of
+	# the vector a context ultimately receives, not the width of any one row: 32Mx64 (one 64-dim
+	# row per context) lost, while 2 heads x 128 concatenated to 256 at the same total memory won.
+	#
+	# CAVEAT: one run per arm, seed 0, and ngram_lr was left at 1.0 (tuned at width 256). Seed
+	# spread here is unmeasured. K=2 vs K=1 (0.57 MB) and K=4 vs K=1 (0.40 MB) are ~3-5x the
+	# row-split effect that was judged noise, so the direction looks real; K=2 vs K=4 (0.17 MB)
+	# is close enough to that threshold that the location of the optimum is the weaker claim.
+	#
+	# K=2 also ran FASTER (676 s vs 738 s) despite twice the lookups, but K=4 took 715 s, so the
+	# ordering is not monotone in K and this is wall-clock noise, not a property of the design.
+	"ngram_heads": 2,
 	"ngram_state_bf16": True,  # bf16 second moment: 516 B/row instead of 1028
+	# Storage precision for the table itself. At heads=2 a row is 128 wide, so per table row:
+	# weight fp32 512 B + v bf16 256 B + seen 4 B = 772 B, and 4M rows is 6.2 GB -- the table
+	# IS the memory budget, and rows are the strongest lever measured (2.49 MB per doubling at
+	# n_layer=3). fp16 halves the weight to 256 B/row, saving 1.9 GB at 4M rows.
+	#
+	# fp16 rather than bf16, which is the opposite of the usual choice and is correct here:
+	# measured row values run mean 21 / max 264 per coordinate, so fp16's 65504 ceiling is
+	# never in danger and bf16's exponent range buys nothing, while its 8-bit mantissa costs
+	# 8x the error (4.8e-2 vs 6.0e-3). Updates run ~18% of row magnitude because ngram_lr=1.0
+	# and Adam normalises, so only 0.18% of coordinates lose their update to fp16 rounding
+	# against 1.38% for bf16. None of this reasoning transfers to normally-scaled weights.
+	#
+	# Measured at n_layer=6, heads=2, scale_mlp=True, at equal VRAM (~5.75 GB of table):
+	#   4M rows fp32   126.02
+	#   4M rows fp16   126.13   (+0.11)  precision cost alone -- a loss on its own
+	#   6M rows fp16   125.52   (-0.50)  same memory as the fp32 arm             <- kept
+	#
+	# So fp16 is only ever worth it PAIRED with more rows: it costs 0.11 and the extra 2M rows
+	# return 0.61. Turning it on without raising ngram_rows is 0.11 MB for nothing.
+	#
+	# The row return is also flatter than the old numbers imply: 4M->6M is 0.585 doublings and
+	# paid 0.61 MB, i.e. ~1.04 MB per doubling against the 2.49 measured 4M->8M at n_layer=3.
+	# Deeper models lean on the table less, so do not extrapolate the n_layer=3 row curve.
+	"ngram_table_fp16": True,
+	# Intermediate-layer injection and context-aware gating (Engram eq. 3-4) were built,
+	# measured and removed. The vector goes into wte, ungated, as it always has.
+	#
+	#              ungated          gated
+	#   layer 0    128.80 MB        not run
+	#   layer 1    129.32 (+0.52)   129.51 (+0.71)
+	#
+	# Depth alone costs 0.52 MB, about what ngram_heads=2 won. At n_layer=3, fusing after
+	# block 0 leaves only 2 of 3 blocks able to see the table; Engram injects at layer 2 of 12
+	# and still leaves 10, so their placement sweep does not transfer to a 3-layer backbone.
+	# Their other reason for going deep is prefetch overlap on a host-offloaded table, which is
+	# not a constraint here.
+	#
+	# Gating then fails to pay for itself: +0.19 MB against ungated at the SAME depth, so it is
+	# not just the depth cost showing through. The gate exists to suppress memory that
+	# contradicts context, which is Engram's answer to collisions and polysemy -- and at
+	# ngram_heads=2 the collision rate is already 0.000%. Nothing left to suppress, so all it
+	# does is force the table's whole contribution through one scalar per position. Multi-head
+	# and gating are substitutes here, and multi-head won. Worth rebuilding only if n_layer
+	# grows a lot or the table is deliberately run with collisions.
 	# Newton-Schulz iterations in Muon. Cost is per optimizer step, not per token: at this shape
 	# Muon is ~1-3 ms of a ~12 ms step, so 3 -> 5 is a few percent of wall clock. It was dropped
 	# to 3 purely for speed back when Muon ran twice per iteration and was 42% of the step; that
@@ -209,6 +332,10 @@ def train(config=None):
 		n_layer=config.n_layer,
 		n_head=config.n_head,
 		n_embd=config.n_embd,
+		scale_mlp=config.scale_mlp,
+		bo_alpha=config.bo_alpha,
+		bo_prelude=config.bo_prelude,
+		bo_coda=config.bo_coda,
 	)
 	window = config.window or model_config.context_length
 
@@ -218,7 +345,8 @@ def train(config=None):
 	# dense weights only. The lookup is also evaluated once per chunk and the same tensor is fed
 	# to every member, so autograd sums their gradients into the shared rows.
 	shared_ngram = (HashedNgram(config.ngram_rows, model_config.n_embd, tuple(config.ngram_orders),
-		max_batch_size=batch, row_dim=config.ngram_row_dim).to(device)
+		max_batch_size=batch, row_dim=config.ngram_row_dim, heads=config.ngram_heads,
+		table_dtype=torch.float16 if config.ngram_table_fp16 else torch.float32).to(device)
 		if config.ngram_rows else None)
 
 	def build_member(seed: int):
@@ -272,7 +400,9 @@ def train(config=None):
 	weight_count = sum(p.numel() for p in raw_models[0].parameters())
 	print(f"weights per model: {weight_count} | total across ensemble: {weight_count * K}"
 	      + (f" | shared hashed n-gram table: {ngram_count/1e6:.1f}M params over "
-	         f"{config.ngram_rows} rows (one copy for all {K} members)" if ngram_count else ""))
+	         f"{shared_ngram.table.num_embeddings} rows x {shared_ngram.head_dim} "
+	         f"({config.ngram_heads} head(s) of {config.ngram_rows}) "
+	         f"(one copy for all {K} members)" if ngram_count else ""))
 
 	# max_tokens caps model-scored tokens, rounded down to a whole lockstep round.
 	positions_to_code = stream.seg_len - 1
