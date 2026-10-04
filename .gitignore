@@ -11,3 +11,4 @@ compressed_model/
 *.txt
 *.csv
 *enwik9
+!requirements.txt
