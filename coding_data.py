@@ -42,6 +42,19 @@ class DataLoaderLite:
         return x, y
 
 
+def doc_start_tokens(first_path='first', second_path='second', vocab_size=10256, marker=b'<page>'):
+    """Token ids whose bytes contain `marker`. In enwik9 every <page> tag lands inside exactly
+    one token (which also carries the end of the previous page), so these ids mark the first
+    token of each new document."""
+    merges = vocab_size - 256
+    first = np.fromfile(first_path, dtype='<i4', count=merges)
+    second = np.fromfile(second_path, dtype='<i4', count=merges)
+    pieces = [bytes([i]) for i in range(256)]
+    for a, b in zip(first, second):
+        pieces.append(pieces[a] + pieces[b])
+    return [i for i, piece in enumerate(pieces) if marker in piece]
+
+
 def validate_dictionary(token_path, source_path, first_path, second_path, vocab_size):
     paths = (token_path, source_path, first_path, second_path)
     signature = tuple((os.path.abspath(p), os.stat(p).st_size, os.stat(p).st_mtime_ns) for p in paths)

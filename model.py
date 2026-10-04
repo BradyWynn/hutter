@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from torch import Tensor
+from torch.nn.attention.flex_attention import flex_attention, create_block_mask, BlockMask
 import matplotlib.pyplot as plt
 
 @dataclass
@@ -22,10 +23,10 @@ class GPTConfig:
 	# with LRs which destabilise at depth 6 (pre-clip gradient norm spiking to ~0.95 against a
 	# 0.26 baseline), so it understated depth. Depth 8+ is untested at stable LRs.
 	context_length: int = 1024
-	vocab_size: int = 10256
-	n_layer: int = 12
-	n_head: int = 3
-	n_embd: int = 192
+	vocab_size: int = 5256
+	n_layer: int = 6
+	n_head: int = 4
+	n_embd: int = 256
 	# Apply attn_scale to the mlp branch too. The scale used to land on attention alone, an
 	# asymmetry no one chose: it arrived with the rmsnorm commit and was never revisited.
 	# Making it symmetric is worth -0.44 MB at n_layer=6 (126.46 -> 126.02). See
@@ -39,6 +40,14 @@ class GPTConfig:
 	bo_alpha: float = 0.0
 	bo_prelude: int = 0      # blocks before e is taken
 	bo_coda: int = 0         # blocks after the operator fires
+	# Retrieval hints (hints.py): per position, n_hint causal match models each report a
+	# predicted token and a (match length x distance) bucket, bucket 0 meaning no match. The
+	# input adds wte(pred) * hint_gate[bucket] -- reusing wte keeps the parameter cost to
+	# n_hint * n_hint_bkt * (n_embd + 1), which matters since weights ship in the archive --
+	# and the predicted token's logit gets a copy bonus hint_logit[bucket]. Both start at zero,
+	# so an untrained hint path is exactly a no-op. 0 disables.
+	n_hint: int = 0
+	n_hint_bkt: int = 64
 
 	@property
 	def head_n_embd(self):
@@ -198,7 +207,12 @@ class Attention(nn.Module):
 			self.kv_cache.write(input_pos, k, v)
 			k, v = k_all, v_all
 
-		y = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, is_causal=mask is None)
+		if isinstance(mask, BlockMask):
+			# document masking: flex attention skips fully-masked blocks instead of falling off
+			# SDPA's flash path, which a dense [B, 1, T, T] mask forces (+58% fwd+bwd measured)
+			y = flex_attention(q, k, v, block_mask=mask)
+		else:
+			y = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, is_causal=mask is None)
 		y = y.transpose(1, 2).contiguous().view(bsz, seqlen, self.config.n_embd)
 		return self.c_proj(y)
 
@@ -360,6 +374,9 @@ class GPT(nn.Module):
 		self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=True)
 		# self.transformer.wte.weight = self.lm_head.weight
 		self.lm_head.weight.data.zero_()
+		if config.n_hint:
+			self.hint_gate = nn.Parameter(torch.zeros(config.n_hint, config.n_hint_bkt, config.n_embd))
+			self.hint_logit = nn.Parameter(torch.zeros(config.n_hint, config.n_hint_bkt))
 
 		# unused (attention takes the is_causal fast path), kept so old checkpoints still load
 		causal_mask = torch.tril(torch.ones(config.context_length, config.context_length, dtype=torch.bool)).view(1, 1, config.context_length, config.context_length)
@@ -430,16 +447,33 @@ class GPT(nn.Module):
 		cur = input_pos[None, :] <= input_pos[:, None]
 		return torch.cat([past, cur], dim=1).view(1, 1, n, -1)
 
-	def forward(self, idx: Tensor, input_pos: Tensor=None, ngram: Tensor=None) -> Tensor:
+	def forward(self, idx: Tensor, input_pos: Tensor=None, ngram: Tensor=None,
+	            hint_tok: Tensor=None, hint_bkt: Tensor=None, doc_seg: Tensor=None) -> Tensor:
 		# `ngram` is computed outside this module and passed in as a plain tensor: the lookup uses a
 		# sparse-gradient Embedding, which does not survive torch.compile, while this forward must.
 		x = self.transformer.wte(idx)
+		if hint_tok is not None:
+			# hint_tok, hint_bkt: [B, T, n_hint], aligned with the TARGETS (position i carries the
+			# hints for predicting token i+1)
+			heads = torch.arange(self.config.n_hint, device=idx.device)
+			live = (hint_bkt > 0).unsqueeze(-1)
+			gate = self.hint_gate[heads, hint_bkt] * live                      # [B, T, H, C]
+			x = x + (self.transformer.wte(hint_tok) * gate).sum(-2)
 		if ngram is not None:
 			x = x + ngram
 
 		# input_pos is what selects the streaming path: without it this is an ordinary
 		# self-contained causal forward over idx, caches untouched.
 		mask = self.cache_mask(input_pos) if input_pos is not None else None
+		if doc_seg is not None:
+			# document masking: [B, T] segment ids; attend causally within the same document only.
+			# RoPE is relative, so a document starting mid-window sees exactly what a coder that
+			# resets its context at the document boundary would.
+			assert input_pos is None, "document masking is for the self-contained forward"
+			B, T = idx.shape
+			def doc_causal(b, h, q, kv):
+				return (q >= kv) & (doc_seg[b, q] == doc_seg[b, kv])
+			mask = create_block_mask(doc_causal, B, None, T, T, device=idx.device)
 
 		# boundary operator: stash the prelude output, then renormalise and re-inject it once
 		# before the coda. Static Python control flow on config ints, so compile is unaffected.
@@ -456,4 +490,7 @@ class GPT(nn.Module):
 		x = norm(x)
 
 		logits = self.lm_head(x)
+		if hint_tok is not None:
+			bonus = self.hint_logit[heads, hint_bkt] * live.squeeze(-1)        # [B, T, H]
+			logits = logits.scatter_add(-1, hint_tok, bonus.to(logits.dtype))
 		return logits
