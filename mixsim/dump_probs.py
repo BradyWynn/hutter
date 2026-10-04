@@ -49,7 +49,7 @@ if doc_mask:
 	is_start[starts_ids] = 1
 # a hint-trained model gets the same causal hints it trained with, indexed by target position
 if cfg.n_hint:
-	hint_tok, hint_bkt = hint_lib.load_hints_gpu(args.tokens, cfg.n_hint, dev, n)
+	hint_tok, hint_bkt = hint_lib.hints_gpu(args.tokens, cfg.n_hint, dev, n)
 assert n > T
 
 # window starts: 0, H, 2H, ...; the last one is pulled back so it ends exactly at n-1

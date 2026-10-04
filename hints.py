@@ -34,7 +34,7 @@ usage: python hints.py [--tokens 5k_enwik9]
        python hints.py --freq2
        -> 5k_enwik9.freq2_tok.npy, 5k_enwik9.freq2_bkt.npy    (frequency hints v2, FREQ2_SPEC)
 """
-import argparse, time
+import argparse, os, time
 import numpy as np
 import numba as nb
 import torch
@@ -53,6 +53,13 @@ assert N_CNT_B * N_SHARE_B == N_BUCKETS, "all hint models share one bucket count
 FREQ2_SPEC = ((1, 1), (2, 1), (3, 1), (4, 1), (5, 1), (6, 1), (2, 2), (3, 2), (4, 2), (3, 3))
 FREQ2_ORDERS = (1, 2, 3, 4, 5, 6)
 TOPK = 3
+# hash table sizes; the in-memory build (hints_gpu) and the file build must agree, or the
+# hints differ from what a model trained on
+MATCH_TABLE_BITS = 24
+FREQ_CTX_BITS = 26       # v1
+FREQ_PAIR_BITS = 28      # v1 and v2
+FREQ2_CTX_BITS = 27      # v2 shares one context table across six orders; at 26 bits orders 5-6
+                         # crowd out orders 3-4 (order-3 coverage 72.3% -> 67.3%)
 U64 = np.uint64
 MUL = U64(0x9E3779B97F4A7C15)
 
@@ -349,17 +356,58 @@ def load_hints_gpu(token_path, n_hint, device, n=None, chunk=1 << 23):
 	assert col == n_hint
 	return tok, bkt
 
+class _DeviceColumns:
+	"""Lets compute_freq2 write its chunks (`out[a:b] = chunk`) straight into columns of a
+	device tensor, so the v2 hints never exist as one host array."""
+	def __init__(self, dst, col):
+		self.dst, self.col = dst, col
+	def __setitem__(self, rows, arr):
+		self.dst[rows, self.col:self.col + arr.shape[1]] = torch.from_numpy(arr).to(self.dst.device)
+
+_HINT_CACHE = {}
+
+def hints_gpu(token_path, n_hint, device, n=None):
+	"""Hint tensors on `device`: from the .npy files when they all exist, otherwise built in
+	memory with the same code and table sizes (identical arrays, no disk; ~7 min of CPU and
+	~5 GB of RAM for the v2 layout). Cached per process, so a sweep builds them once."""
+	key = (token_path, n_hint, n, str(device))
+	if key in _HINT_CACHE:
+		return _HINT_CACHE[key]
+	paths = _layout(token_path, n_hint)
+	if all(os.path.exists(f) for pair in paths for f in pair):
+		out = load_hints_gpu(token_path, n_hint, device, n)
+	else:
+		print(f"hint files missing: building {n_hint} hint columns in memory (deterministic, ~7 min)")
+		t0 = time.time()
+		toks = np.asarray(load_tokens(token_path)[:n], dtype=np.int32)
+		tok = torch.empty((len(toks), n_hint), dtype=torch.int16, device=device)
+		bkt = torch.empty((len(toks), n_hint), dtype=torch.uint8, device=device)
+		ht, hb = compute(toks, MATCH_TABLE_BITS)
+		m = len(MATCH_MIN)
+		tok[:, :m] = torch.from_numpy(ht).to(device)
+		bkt[:, :m] = torch.from_numpy(hb).to(device)
+		del ht, hb
+		if n_hint == n_hints(1):
+			ft, fb = compute_freq(toks, FREQ_CTX_BITS, FREQ_PAIR_BITS)
+			tok[:, m:] = torch.from_numpy(ft).to(device)
+			bkt[:, m:] = torch.from_numpy(fb).to(device)
+			del ft, fb
+		elif n_hint == n_hints(2):
+			compute_freq2(toks, FREQ2_CTX_BITS, FREQ_PAIR_BITS, _DeviceColumns(tok, m), _DeviceColumns(bkt, m))
+		print(f"built hints in {time.time() - t0:.0f}s")
+		out = (tok, bkt)
+	_HINT_CACHE[key] = out
+	return out
+
 if __name__ == "__main__":
 	ap = argparse.ArgumentParser()
 	ap.add_argument("--tokens", default="5k_enwik9")
-	ap.add_argument("--table_bits", type=int, default=24)
-	ap.add_argument("--ctx_bits", type=int, default=26)
-	ap.add_argument("--pair_bits", type=int, default=28)
+	ap.add_argument("--table_bits", type=int, default=MATCH_TABLE_BITS)
+	ap.add_argument("--ctx_bits", type=int, default=FREQ_CTX_BITS)
+	ap.add_argument("--pair_bits", type=int, default=FREQ_PAIR_BITS)
 	ap.add_argument("--freq_only", action="store_true", help="skip the (unchanged) match hints")
 	ap.add_argument("--freq2", action="store_true", help="only build the v2 frequency hints")
-	# v2 shares one context table across six orders; at 26 bits orders 5-6 crowd out orders 3-4
-	# (order-3 coverage 72.3% -> 67.3%). The decoder must rebuild with the same sizes.
-	ap.add_argument("--freq2_ctx_bits", type=int, default=27)
+	ap.add_argument("--freq2_ctx_bits", type=int, default=FREQ2_CTX_BITS)
 	args = ap.parse_args()
 	toks = np.asarray(load_tokens(args.tokens), dtype=np.int32)
 	assert toks.max() < 32768, "hint_tok is stored as int16"

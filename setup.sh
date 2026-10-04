@@ -9,7 +9,11 @@
 #   TORCH_INDEX  PyTorch wheel index for the server's CUDA driver (default cu130; e.g.
 #                https://download.pytorch.org/whl/cu128 for an older driver)
 #   PYTHON       interpreter for the venv when uv is not installed (default python3.12)
+#   HINT_FILES   1 = write the hint arrays to disk (~13 GB), 0 = don't (train.py then builds
+#                them in memory at startup, ~7 min of CPU per process). Default: 1 only if at
+#                least 20 GB are free.
 #
+# Disk: ~8 GB without hint files (env ~6.5, tokens 0.5, enwik9 1), ~21 GB with them.
 # Safe to rerun: every step skips work that is already done.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -22,11 +26,12 @@ PY=.venv/bin/python
 if [ ! -x "$PY" ]; then
 	if command -v uv >/dev/null; then uv venv --python 3.12 .venv; else "$PYTHON" -m venv .venv; fi
 fi
+# no download cache: the torch wheel and its CUDA libraries would otherwise be stored twice
 if command -v uv >/dev/null; then
-	PIP=(uv pip install --python "$PY")
+	PIP=(uv pip install --no-cache --python "$PY")
 else
-	"$PY" -m pip install --quiet --upgrade pip
-	PIP=("$PY" -m pip install)
+	"$PY" -m pip install --quiet --no-cache-dir --upgrade pip
+	PIP=("$PY" -m pip install --no-cache-dir)
 fi
 "${PIP[@]}" torch==2.9.1 --index-url "$TORCH_INDEX"
 "${PIP[@]}" -r requirements.txt
@@ -46,12 +51,18 @@ fi
 # the token stream must decode, through the committed dictionary, to exactly enwik9
 "$PY" -c "from coding_data import validate_dictionary as v; print('tokens verified:', v('5k_enwik9', 'enwik9', 'first', 'second', 5256))"
 
-# ---- 3. Hint arrays (~13 GB, deterministic, cheaper to rebuild than to upload) ----
-if [ ! -f 5k_enwik9.hint_tok.npy ] || [ ! -f 5k_enwik9.freq_tok.npy ]; then
-	"$PY" hints.py               # match hints + v1 frequency hints, ~3 min
-fi
-if [ ! -f 5k_enwik9.freq2_tok.npy ]; then
-	"$PY" hints.py --freq2       # v2 frequency hints, ~4 min, needs ~7 GB RAM
+# ---- 3. Hint arrays (optional on disk: train.py builds identical ones in memory when absent) ----
+free_gb=$(df -Pk . | awk 'NR==2 {print int($4 / 1048576)}')
+HINT_FILES=${HINT_FILES:-$([ "$free_gb" -ge 20 ] && echo 1 || echo 0)}
+if [ "$HINT_FILES" = 1 ]; then
+	if [ ! -f 5k_enwik9.hint_tok.npy ] || [ ! -f 5k_enwik9.freq_tok.npy ]; then
+		"$PY" hints.py               # match hints + v1 frequency hints (~5 GB), ~3 min
+	fi
+	if [ ! -f 5k_enwik9.freq2_tok.npy ]; then
+		"$PY" hints.py --freq2       # v2 frequency hints (~7.5 GB), ~4 min, needs ~7 GB RAM
+	fi
+else
+	echo "skipping hint files (${free_gb} GB free): train.py builds the hints in memory at startup (~7 min, ~5 GB RAM)"
 fi
 
 # ---- 4. Weights & Biases ----

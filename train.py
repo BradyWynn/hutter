@@ -127,7 +127,7 @@ def train(config=None):
 	print(f"=> calculated gradient accumulation steps: {grad_accum_steps}")
 
 	n_hint = hint_lib.n_hints(config.get("freq_hints", 0)) if config.hints else 0
-	hint_arrays = hint_lib.load_hints_gpu(config.token_path, n_hint, device) if n_hint else [None, None]
+	hint_arrays = hint_lib.hints_gpu(config.token_path, n_hint, device) if n_hint else [None, None]
 	doc_starts = doc_start_tokens(vocab_size=config.vocab_size) if config.doc_mask else None
 	train_loader = RandomWindowLoader(load_tokens(config.token_path), B, config.context_length, config.data_seed, device,
 	                                  *hint_arrays, doc_starts=doc_starts)
