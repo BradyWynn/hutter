@@ -1,0 +1,59 @@
+tokens 260,494,554 | ctx_bits 26 pair_bits 27 | 742s
+n-gram normalisation check: 13017 positions, mean sum_y p = 1.00000, max = 1.0000000
+
+config                                  nats/tok        MB     vs T
+T only                                    2.3909    112.31    +0.00
+chain alone, lr=0.01                      2.3780    111.71    -0.60
+chain alone, lr=0.05 (fed to bank 2)      2.3779    111.70    -0.61
+chain alone, lr=0.2                       2.3778    111.70    -0.61
+-- bank 1: base models
+  layer-1 A match x match                 2.3783    111.72    -0.59
+  layer-1 B conf x entropy                2.3771    111.67    -0.65
+  layer-1 C ngram order x count           2.3776    111.69    -0.62
+  layer-1 D prev token                    2.3751    111.58    -0.74
+  layer-1 E match x conf                  2.3776    111.69    -0.62
+  layer-1 F match x dist x conf           2.3774    111.68    -0.63
+  2-layer final                           2.3734    111.50    -0.82
+-- bank 2: base + chain
+  layer-1 A match x match                 2.3766    111.65    -0.67
+  layer-1 B conf x entropy                2.3747    111.55    -0.76
+  layer-1 C ngram order x count           2.3765    111.64    -0.67
+  layer-1 D prev token                    2.3739    111.52    -0.80
+  layer-1 E match x conf                  2.3755    111.59    -0.72
+  layer-1 F match x dist x conf           2.3756    111.60    -0.72
+  2-layer final                           2.3726    111.46    -0.86
+
+M5-matched tokens by match distance:
+ distance   share  M5 hit   T loss    bank1    bank2  saved MB (bank2)
+    <=512   5.49%  70.66%    1.035    1.021    1.022              0.03
+   <=1024   0.97%  72.16%    0.955    0.939    0.940              0.01
+   <=8192   2.33%  72.75%    0.913    0.895    0.895              0.02
+    >8192  13.91%  55.67%    1.505    1.479    1.477              0.18
+
+by M5 match length (bank 2 final):
+len bucket   share   T loss  mix loss  saved MB
+      none  77.29%    2.709     2.692      0.62
+       >=4  13.02%    1.731     1.707      0.14
+       >=8   6.28%    0.915     0.892      0.07
+      >=16   2.07%    0.533     0.513      0.02
+      >=32   0.79%    0.283     0.269      0.01
+      >=64   0.30%    0.170     0.160      0.00
+     >=128   0.18%    0.050     0.048      0.00
+     >=256   0.06%    0.123     0.121      0.00
+     >=512   0.01%    0.035     0.034      0.00
+    >=1024   0.00%    0.017     0.018     -0.00
+    >=2048   0.00%    0.010     0.012     -0.00
+    >=4096   0.00%    0.014     0.027     -0.00
+
+learned chain lambda for M5 links (lr=0.05), rows = length bucket, cols = distance:
+  >=4      0.000  0.006  0.015  0.009
+  >=8      0.000  0.001  0.001  0.051
+  >=16     0.038  0.003  0.003  0.078
+  >=32     0.047  0.045  0.032  0.090
+  >=64     0.111  0.100  0.176  0.217
+  >=128    0.427  0.107  0.425  0.434
+  >=256    0.037  0.049  0.044  0.111
+  >=512    0.052  0.052  0.058  0.284
+  >=1024   0.050  0.050  0.050  0.085
+  >=2048   0.050  0.050  0.050  0.062
+  >=4096   0.050  0.050  0.050  0.050

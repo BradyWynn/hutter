@@ -29,6 +29,7 @@ DEFAULTS = {
 	"data_seed": 1234,     # seed for random window sampling
 	"hints": True,        # feed retrieval hints (hints.py; run it first to build the arrays)
 	"hint_lr": 0.05,
+	"freq_hints": 2,       # frequency hints on top of the match hints: 0 none, 1 orders 1-4 top-1, 2 orders 1-6 + top-2/3
 	"doc_mask": True,      # attention never crosses a <page> boundary (coding must reset context there too)
 	"context_length": GPTConfig.context_length,
 	"vocab_size": GPTConfig.vocab_size,
@@ -42,6 +43,8 @@ DEFAULTS = {
 	"lm_head_lr": 0.00181864153812,
 	"b_lr": 0.02088101953753996,
 	"muon_wd": 0.0,
+	"normuon": True,       # NorMuon: per-neuron normalisation of the Muon update (muon.py)
+	"normuon_beta2": 0.95,
 	"cooldown_frac": 0.5,
 	"warmup_frac": 0.0,
 	"max_steps": 30_000,
@@ -51,7 +54,7 @@ DEFAULTS = {
 
 # A resumed run must rebuild exactly the checkpoint's model and data path, so these come from
 # the checkpoint's run config, whatever DEFAULTS say.
-RESUME_KEYS = ("token_path", "context_length", "vocab_size", "n_layer", "n_head", "n_embd", "hints", "doc_mask")
+RESUME_KEYS = ("token_path", "context_length", "vocab_size", "n_layer", "n_head", "n_embd", "hints", "freq_hints", "doc_mask")
 
 # ---------------------------------------------------------------------------
 # data
@@ -66,12 +69,12 @@ class RandomWindowLoader:
 		self.B, self.T = B, T
 		self.n = len(tokens)
 		assert self.n > T, "token stream shorter than one window"
-		# int32: torch has little uint16 support, and int32 halves the footprint of int64
-		self.tokens = torch.from_numpy(np.asarray(tokens, dtype=np.int32)).to(device)
+		# int16 (vocab < 32768): torch has little uint16 support, and every GPU byte goes to hints
+		assert int(np.max(tokens)) < 32768
+		self.tokens = torch.from_numpy(np.asarray(tokens, dtype=np.int16)).to(device)
 		self.offsets = torch.arange(T + 1, device=device)
 		# hints are indexed by target position, so a window's hints are gathered at its y
-		self.hint_tok = None if hint_tok is None else torch.from_numpy(np.asarray(hint_tok)).to(device)
-		self.hint_bkt = None if hint_bkt is None else torch.from_numpy(np.asarray(hint_bkt)).to(device)
+		self.hint_tok, self.hint_bkt = hint_tok, hint_bkt     # [n, n_hint] tensors already on device
 		# token id -> starts a new document; a window's segment ids are a running count of those
 		# in its inputs, so they need nothing outside the window (the decoder derives the same)
 		self.is_start = None
@@ -123,7 +126,8 @@ def train(config=None):
 	print(f"total desired batch size: {total_batch_size}")
 	print(f"=> calculated gradient accumulation steps: {grad_accum_steps}")
 
-	hint_arrays = [np.load(p, mmap_mode="r") for p in hint_lib.hint_paths(config.token_path)] if config.hints else [None, None]
+	n_hint = hint_lib.n_hints(config.get("freq_hints", 0)) if config.hints else 0
+	hint_arrays = hint_lib.load_hints_gpu(config.token_path, n_hint, device) if n_hint else [None, None]
 	doc_starts = doc_start_tokens(vocab_size=config.vocab_size) if config.doc_mask else None
 	train_loader = RandomWindowLoader(load_tokens(config.token_path), B, config.context_length, config.data_seed, device,
 	                                  *hint_arrays, doc_starts=doc_starts)
@@ -136,7 +140,7 @@ def train(config=None):
 		n_layer=config.n_layer,
 		n_head=config.n_head,
 		n_embd=config.n_embd,
-		n_hint=len(hint_lib.MATCH_MIN) if config.hints else 0,
+		n_hint=n_hint,
 		n_hint_bkt=hint_lib.N_BUCKETS,
 	)
 
@@ -155,17 +159,18 @@ def train(config=None):
 	# and skip per-kernel launch overhead.
 	loss_fn = torch.compile(token_nll, mode='max-autotune') if config.compile else token_nll
 
-	optimizer1 = torch.optim.Adam([raw_model.transformer.wte.weight], lr=config.wte_lr, betas=(0.0, 0.999), fused=(device_type == "cuda"))
-	optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=config.lm_head_lr, betas=(0.0, 0.999), fused=(device_type == "cuda"))
+	optimizer1 = torch.optim.Adam([raw_model.transformer.wte.weight], lr=config.wte_lr, betas=(0.9, 0.999), fused=(device_type == "cuda"))
+	optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=config.lm_head_lr, betas=(0.9, 0.999), fused=(device_type == "cuda"))
 	w_params = [m.weight for m in raw_model.transformer.h.modules() if isinstance(m, torch.nn.Linear)]
 	b_params = [m.bias for m in raw_model.transformer.h.modules() if isinstance(m, torch.nn.Linear)]
 	b_params.append(raw_model.lm_head.bias)
-	optimizer3 = SingleDeviceMuon(w_params, lr=config.muon_lr, momentum=0.95, weight_decay=config.muon_wd)
-	optimizer4 = torch.optim.Adam(b_params, lr=config.b_lr, betas=(0.0, 0.999), fused=(device_type == "cuda"))
+	optimizer3 = SingleDeviceMuon(w_params, lr=config.muon_lr, momentum=0.95, weight_decay=config.muon_wd,
+	                              normuon_beta2=config.normuon_beta2 if config.get("normuon", False) else None)
+	optimizer4 = torch.optim.Adam(b_params, lr=config.b_lr, betas=(0.9, 0.999), fused=(device_type == "cuda"))
 	optimizers = [optimizer1, optimizer2, optimizer3, optimizer4]
 	if config.hints:
 		optimizers.append(torch.optim.Adam([raw_model.hint_gate, raw_model.hint_logit], lr=config.hint_lr,
-		                                   betas=(0.0, 0.999), fused=(device_type == "cuda")))
+		                                   betas=(0.9, 0.999), fused=(device_type == "cuda")))
 
 	for opt in optimizers:
 		for group in opt.param_groups:

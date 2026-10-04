@@ -95,9 +95,18 @@ class SingleDeviceMuon(torch.optim.Optimizer):
     few thousand tokens rather than every few hundred thousand -- it is a large fraction of the
     total, and the individual matmuls are small enough to be launch-bound. `ns_steps` is exposed for
     the same reason: dropping 5 -> 3 is a straight ~1.6x on the orthogonalization.
+
+    `normuon_beta2` (None = plain Muon) turns on NorMuon's per-neuron normalisation: after
+    orthogonalisation, each output row's mean squared update is tracked as an EMA and the row is
+    divided by its RMS, then the whole matrix is rescaled back to the orthogonalised update's
+    Frobenius norm. Orthogonalisation equalises the update across singular directions but not
+    across neurons; this evens out the neurons too, while the fixed norm keeps `lr` meaning the
+    same as for plain Muon. The renormalisation also cancels the EMA's zero-init bias, which is
+    common to every row.
     """
-    def __init__(self, params, lr=0.02, weight_decay=0, momentum=0.95, ns_steps=5):
-        defaults = dict(lr=lr, weight_decay=weight_decay, momentum=momentum, ns_steps=ns_steps)
+    def __init__(self, params, lr=0.02, weight_decay=0, momentum=0.95, ns_steps=5, normuon_beta2=None):
+        defaults = dict(lr=lr, weight_decay=weight_decay, momentum=momentum, ns_steps=ns_steps,
+                        normuon_beta2=normuon_beta2)
         super().__init__(params, defaults)
 
     @torch.no_grad()
@@ -110,17 +119,28 @@ class SingleDeviceMuon(torch.optim.Optimizer):
                     buckets.setdefault(tuple(p.shape), []).append(p)
             for shape, params in buckets.items():
                 grads = [p.grad for p in params]
-                bufs = []
+                beta2 = group.get("normuon_beta2")
+                bufs, row_v = [], []
                 for p in params:
                     state = self.state[p]
-                    if len(state) == 0:
+                    if "momentum_buffer" not in state:
                         state["momentum_buffer"] = torch.zeros_like(p)
                     bufs.append(state["momentum_buffer"])
+                    if beta2 is not None:
+                        if "row_v" not in state:      # also covers resuming a plain-Muon checkpoint
+                            state["row_v"] = torch.zeros(shape[-2], dtype=torch.float32, device=p.device)
+                        row_v.append(state["row_v"])
                 # momentum.lerp_(grad, 1-beta); update = grad.lerp_(momentum, beta)  [nesterov]
                 torch._foreach_lerp_(bufs, grads, 1 - beta)
                 torch._foreach_lerp_(grads, bufs, beta)
                 update = zeropower_via_newtonschulz5(torch.stack(grads), steps=group["ns_steps"])
                 update *= max(1, shape[-2] / shape[-1])**0.5
+                if beta2 is not None:
+                    u = update.float()                                       # [K, rows, cols]
+                    torch._foreach_lerp_(row_v, list(u.square().mean(-1).unbind(0)), 1 - beta2)
+                    scaled = u * torch.stack(row_v).clamp_min(1e-10).rsqrt().unsqueeze(-1)
+                    norm = u.norm(dim=(-2, -1), keepdim=True)
+                    update = scaled * (norm / scaled.norm(dim=(-2, -1), keepdim=True).clamp_min(1e-10))
                 update = update.to(params[0].dtype)
                 if wd:
                     torch._foreach_mul_(params, 1 - lr * wd)

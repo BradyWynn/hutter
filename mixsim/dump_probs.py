@@ -49,9 +49,7 @@ if doc_mask:
 	is_start[starts_ids] = 1
 # a hint-trained model gets the same causal hints it trained with, indexed by target position
 if cfg.n_hint:
-	ht_np, hb_np = (np.load(p, mmap_mode="r") for p in hint_lib.hint_paths(args.tokens))
-	hint_tok = torch.from_numpy(np.asarray(ht_np[:n])).to(dev)
-	hint_bkt = torch.from_numpy(np.asarray(hb_np[:n])).to(dev)
+	hint_tok, hint_bkt = hint_lib.load_hints_gpu(args.tokens, cfg.n_hint, dev, n)
 assert n > T
 
 # window starts: 0, H, 2H, ...; the last one is pulled back so it ends exactly at n-1
