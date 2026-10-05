@@ -24,9 +24,9 @@ class GPTConfig:
 	# 0.26 baseline), so it understated depth. Depth 8+ is untested at stable LRs.
 	context_length: int = 1024
 	vocab_size: int = 5256
-	n_layer: int = 6
-	n_head: int = 4
-	n_embd: int = 256
+	n_layer: int = 12
+	n_head: int = 12
+	n_embd: int = 768
 	# Apply attn_scale to the mlp branch too. The scale used to land on attention alone, an
 	# asymmetry no one chose: it arrived with the rmsnorm commit and was never revisited.
 	# Making it symmetric is worth -0.44 MB at n_layer=6 (126.46 -> 126.02). See

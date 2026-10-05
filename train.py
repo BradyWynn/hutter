@@ -27,7 +27,7 @@ DEFAULTS = {
 	"compile": True,
 	"log_interval": 100,   # print/log every this many steps (plus the last step)
 	"data_seed": 1234,     # seed for random window sampling
-	"hints": True,        # feed retrieval hints (hints.py; run it first to build the arrays)
+	"hints": False,        # feed retrieval hints (hints.py; run it first to build the arrays)
 	"hint_lr": 0.05,
 	"freq_hints": 2,       # frequency hints on top of the match hints: 0 none, 1 orders 1-4 top-1, 2 orders 1-6 + top-2/3
 	"doc_mask": True,      # attention never crosses a <page> boundary (coding must reset context there too)
@@ -37,17 +37,17 @@ DEFAULTS = {
 	"n_head": GPTConfig.n_head,
 	"n_embd": GPTConfig.n_embd,
 	"total_batch_size": 32,   # in sequences, not tokens
-	"B": 32,                   # micro batch size
+	"B": 16,                   # micro batch size
 	"muon_lr": 0.020466009566743288,
 	"wte_lr": 0.18293164620959812,
-	"lm_head_lr": 0.00181864153812,
+	"lm_head_lr": 0.00060621384604,
 	"b_lr": 0.02088101953753996,
 	"muon_wd": 0.0,
 	"normuon": True,       # NorMuon: per-neuron normalisation of the Muon update (muon.py)
 	"normuon_beta2": 0.95,
 	"cooldown_frac": 0.5,
 	"warmup_frac": 0.0,
-	"max_steps": 30_000,
+	"max_steps": 60_000,
 	"lr_scale": 1.0,       # multiplies the whole schedule (every optimizer's peak LR)
 	"resume": "",          # checkpoint path: continue its weights, optimizer state and data stream
 }
