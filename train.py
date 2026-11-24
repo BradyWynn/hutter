@@ -1,343 +1,384 @@
 import os
-import gc
-import dataclasses
-import math
+import copy
+import json
 import time
-import torch
-from torch.nn import functional as F
+import math
 import numpy as np
-from model import GPT, GPTConfig
+import torch
 import wandb
-from muon import SingleDeviceMuon
-from coding_data import load_tokens, doc_start_tokens
-import hints as hint_lib
-# import lzma
+import torch.nn.functional as F
+from model import GPT, GPTConfig, FP8Linear, QATLinear, quantize_4bit_stats
+from muon import Muon
+import matchfeat
 
-# ---------------------------------------------------------------------------
-# run mode
-# ---------------------------------------------------------------------------
-SWEEP = False          # False: one run using DEFAULTS. True: launch/join a wandb sweep.
-SWEEP_COUNT = 10000       # runs for this agent to execute
-SWEEP_ID = None        # set to an existing sweep id to join it instead of creating one
+B, ACCUM, T, STEPS, LOG, CKPT = 16, 1, 2048, 100_000, 100, 1000
+LR_MUON, LR_WTE, LR_HEAD, LR_CONV, LR_SCALAR, LR_BIAS = 0.015, 0.005, 0.001818, 0.003, 0.003, 0.0209
+WD_MUON, WD_ADAM = 0.005, 0.005
+WARMUP, COOLDOWN = 0, 0.30
+# Optional checkpointing:
+# - INIT_FROM: load model weights (and seed EMA from them) for a fresh schedule / cooldown / QAT branch
+# - RESUME: resume full state (model, ema, optimizers, step, RNG) from a saved ckpt.pt
+INIT_FROM = None
+RESUME = None
+# EMA of all weights, updated after every optimizer step (decay warms up as (1+t)/(10+t));
+# None disables. Every CKPT steps both models are scored on the same EVAL_BATCHES fixed batches
+EMA_DECAY, EVAL_BATCHES = 0.999, 32
+# distillation: set TEACHER to a state_dict path (e.g. a model.pt from a past run)
+# loss = (1 - KD_ALPHA) * CE + KD_ALPHA * KD_TEMP^2 * KL(teacher || student)
+TEACHER = None
+TEACHER_CFG = dict(n_layer=12, n_head=12, n_embd=768)
+KD_ALPHA, KD_TEMP = 1.0, 1.0
+# data: "enwik9" trains on raw bytes; a bpe_tok.py prefix such as "enwik9.split4096"
+# trains on its token file (DATA + ".i16"), with the vocab from DATA + ".json"
+DATA = "enwik9.split4096"
+# match features (matchfeat.py): one column per context length, counted in bytes or tokens
+# to match DATA; () disables. The token lengths cover about the same text at ~2.3 bytes/token
+MATCH_K = (5, 12, 32, 64) if DATA == "enwik9" else (2, 3, 5, 8, 13, 27)
 
-# Defaults for a single run. Under a sweep, wandb overrides the swept keys.
-DEFAULTS = {
-	"architecture": "transformer",
-	"token_path": "5k_enwik9",
-	"compile": True,
-	"log_interval": 100,   # print/log every this many steps (plus the last step)
-	"data_seed": 1234,     # seed for random window sampling
-	"hints": False,        # feed retrieval hints (hints.py; run it first to build the arrays)
-	"hint_lr": 0.05,
-	"freq_hints": 2,       # frequency hints on top of the match hints: 0 none, 1 orders 1-4 top-1, 2 orders 1-6 + top-2/3
-	"doc_mask": True,      # attention never crosses a <page> boundary (coding must reset context there too)
-	"context_length": GPTConfig.context_length,
-	"vocab_size": GPTConfig.vocab_size,
-	"n_layer": GPTConfig.n_layer,
-	"n_head": GPTConfig.n_head,
-	"n_embd": GPTConfig.n_embd,
-	"total_batch_size": 32,   # in sequences, not tokens
-	"B": 16,                   # micro batch size
-	"muon_lr": 0.020466009566743288,
-	"wte_lr": 0.18293164620959812,
-	"lm_head_lr": 0.00060621384604,
-	"b_lr": 0.02088101953753996,
-	"muon_wd": 0.0,
-	"normuon": True,       # NorMuon: per-neuron normalisation of the Muon update (muon.py)
-	"normuon_beta2": 0.95,
-	"cooldown_frac": 0.5,
-	"warmup_frac": 0.0,
-	"max_steps": 60_000,
-	"lr_scale": 1.0,       # multiplies the whole schedule (every optimizer's peak LR)
-	"resume": "",          # checkpoint path: continue its weights, optimizer state and data stream
-}
-
-# A resumed run must rebuild exactly the checkpoint's model and data path, so these come from
-# the checkpoint's run config, whatever DEFAULTS say.
-RESUME_KEYS = ("token_path", "context_length", "vocab_size", "n_layer", "n_head", "n_embd", "hints", "freq_hints", "doc_mask")
-
-# ---------------------------------------------------------------------------
-# data
-# ---------------------------------------------------------------------------
-class RandomWindowLoader:
-	"""Every batch is B independent, uniformly random windows from the token stream.
-	No epochs, no ordering: windows can overlap and repeat.
-
-	The whole token stream lives on `device` and windows are sampled there, so a batch
-	never touches the CPU or waits on a host->device copy."""
-	def __init__(self, tokens, B, T, seed, device, hint_tok=None, hint_bkt=None, doc_starts=None):
-		self.B, self.T = B, T
-		self.n = len(tokens)
-		assert self.n > T, "token stream shorter than one window"
-		# int16 (vocab < 32768): torch has little uint16 support, and every GPU byte goes to hints
-		assert int(np.max(tokens)) < 32768
-		self.tokens = torch.from_numpy(np.asarray(tokens, dtype=np.int16)).to(device)
-		self.offsets = torch.arange(T + 1, device=device)
-		# hints are indexed by target position, so a window's hints are gathered at its y
-		self.hint_tok, self.hint_bkt = hint_tok, hint_bkt     # [n, n_hint] tensors already on device
-		# token id -> starts a new document; a window's segment ids are a running count of those
-		# in its inputs, so they need nothing outside the window (the decoder derives the same)
-		self.is_start = None
-		if doc_starts is not None:
-			size = max(int(self.tokens.max()), max(doc_starts)) + 1   # some start ids may never occur
-			self.is_start = torch.zeros(size, dtype=torch.int32, device=device)
-			self.is_start[doc_starts] = 1
-		self.rng = torch.Generator(device=device)
-		self.rng.manual_seed(seed)
-
-	def next_batch(self):
-		# need x[s:s+T] and y[s+1:s+T+1], so starts run over [0, n-T)
-		starts = torch.randint(0, self.n - self.T, (self.B,), generator=self.rng, device=self.tokens.device)
-		idx = starts[:, None] + self.offsets
-		w = self.tokens[idx].long()
-		x, y = w[:, :-1], w[:, 1:]
-		seg = None if self.is_start is None else torch.cumsum(self.is_start[x], dim=1)
-		if self.hint_tok is None:
-			return x, y, None, None, seg
-		tgt = idx[:, 1:]
-		return x, y, self.hint_tok[tgt].long(), self.hint_bkt[tgt].long(), seg
-
-device = "cpu"
-if torch.cuda.is_available():
-	device = "cuda"
-print(f"using device: {device}")
-
-device_type = "cuda" if device.startswith("cuda") else "cpu"
-
-torch.set_float32_matmul_precision('high')
+torch.set_float32_matmul_precision("high")
+N_BYTES = os.path.getsize("enwik9")
+if DATA == "enwik9":
+    data = torch.frombuffer(
+        bytearray(open("enwik9", "rb").read()), dtype=torch.uint8
+    ).cuda()
+    VOCAB = 256
+else:
+    data = torch.from_numpy(np.fromfile(DATA + ".i16", dtype=np.int16)).cuda()
+    VOCAB = 256 + len(json.load(open(DATA + ".json"))["merges"])
+N = len(data)  # training positions: bytes or tokens
+print(
+    f"data: {DATA} | {N:,} positions, vocab {VOCAB}, {N_BYTES / N:.3f} bytes/position"
+)
+match_tables = ()
+if MATCH_K:
+    # [N, len(MATCH_K)] each, as numpy memmaps on disk (~8 GB for enwik9, too much for VRAM);
+    # each micro-step gathers only its B windows of T rows
+    match_tables = matchfeat.cached(data, MATCH_K, DATA)
+    torch.cuda.empty_cache()  # hand the build's scratch memory back before CUDA graph capture
+offs = torch.arange(T + 1, device="cuda")
 
 
-def train(config=None):
-	# Under an agent, wandb.init() picks up the sweep's parameters; values swept
-	# override the matching keys in DEFAULTS.
-	run = wandb.init(project="hutter", config={**DEFAULTS, **(config or {})})
-	config = wandb.config
-	resume_ck = None
-	if config.resume:
-		resume_ck = torch.load(config.resume, map_location="cpu", weights_only=False)
-		config.update({k: resume_ck["run_config"][k] for k in RESUME_KEYS}, allow_val_change=True)
-		print(f"resuming {config.resume} (step {resume_ck['step']})")
+class Batches:
+    """Random window starts, plus the match feature rows of each window, gathered on the CPU
+    into a ring of pinned buffers and copied to the GPU asynchronously. A buffer is refilled
+    only after the event of its previous copy has fired."""
 
-	total_batch_size = config.total_batch_size
-	B = config.B
-	assert B > 0 and total_batch_size > 0 and config.context_length > 0
-	assert total_batch_size % B == 0, "make sure total_batch_size is divisible by B"
-	grad_accum_steps = total_batch_size // B
-	print(f"total desired batch size: {total_batch_size}")
-	print(f"=> calculated gradient accumulation steps: {grad_accum_steps}")
+    def __init__(self, tables, n_buf=8):
+        self.gen = torch.Generator().manual_seed(1234)
+        self.tables = tables
+        self.ring = [
+            [torch.empty(B, dtype=torch.long).pin_memory()]
+            + [
+                torch.empty(
+                    B, T, a.shape[1], dtype=torch.from_numpy(np.empty(0, a.dtype)).dtype
+                ).pin_memory()
+                for a in tables
+            ]
+            for _ in range(n_buf)
+        ]
+        self.events = [None] * n_buf
+        self.i = 0
 
-	n_hint = hint_lib.n_hints(config.get("freq_hints", 0)) if config.hints else 0
-	hint_arrays = hint_lib.hints_gpu(config.token_path, n_hint, device) if n_hint else [None, None]
-	doc_starts = doc_start_tokens(vocab_size=config.vocab_size) if config.doc_mask else None
-	train_loader = RandomWindowLoader(load_tokens(config.token_path), B, config.context_length, config.data_seed, device,
-	                                  *hint_arrays, doc_starts=doc_starts)
-	num_tokens = train_loader.n
-	run.config.update({"num_tokens": num_tokens}, allow_val_change=True)
-
-	model_config = GPTConfig(
-		context_length=config.context_length,
-		vocab_size=config.vocab_size,
-		n_layer=config.n_layer,
-		n_head=config.n_head,
-		n_embd=config.n_embd,
-		n_hint=n_hint,
-		n_hint_bkt=hint_lib.N_BUCKETS,
-	)
-
-	torch.manual_seed(0)
-	raw_model = GPT(model_config).to(device)
-
-	def token_nll(x, y, hint_tok, hint_bkt, doc_seg):
-		"""Per-position NLL, shape [B, T]. Model and loss are compiled as one graph so the
-		fp32 cast and softmax fuse instead of materialising full-vocab logits several times."""
-		with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-			logits = raw_model(x, hint_tok=hint_tok, hint_bkt=hint_bkt, doc_seg=doc_seg)
-		V = logits.size(-1)
-		return F.cross_entropy(logits.reshape(-1, V).float(), y.flatten(), reduction='none').view(y.shape)
-
-	# Every batch is exactly [B, T], so CUDA graphs can replay the whole forward/backward
-	# and skip per-kernel launch overhead.
-	loss_fn = torch.compile(token_nll, mode='max-autotune') if config.compile else token_nll
-
-	optimizer1 = torch.optim.Adam([raw_model.transformer.wte.weight], lr=config.wte_lr, betas=(0.9, 0.999), fused=(device_type == "cuda"))
-	optimizer2 = torch.optim.Adam([raw_model.lm_head.weight], lr=config.lm_head_lr, betas=(0.9, 0.999), fused=(device_type == "cuda"))
-	w_params = [m.weight for m in raw_model.transformer.h.modules() if isinstance(m, torch.nn.Linear)]
-	b_params = [m.bias for m in raw_model.transformer.h.modules() if isinstance(m, torch.nn.Linear)]
-	b_params.append(raw_model.lm_head.bias)
-	optimizer3 = SingleDeviceMuon(w_params, lr=config.muon_lr, momentum=0.95, weight_decay=config.muon_wd,
-	                              normuon_beta2=config.normuon_beta2 if config.get("normuon", False) else None)
-	optimizer4 = torch.optim.Adam(b_params, lr=config.b_lr, betas=(0.9, 0.999), fused=(device_type == "cuda"))
-	optimizers = [optimizer1, optimizer2, optimizer3, optimizer4]
-	if config.hints:
-		optimizers.append(torch.optim.Adam([raw_model.hint_gate, raw_model.hint_logit], lr=config.hint_lr,
-		                                   betas=(0.9, 0.999), fused=(device_type == "cuda")))
-
-	for opt in optimizers:
-		for group in opt.param_groups:
-			group["initial_lr"] = group["lr"]
-
-	start_step = 0
-	if resume_ck is not None:
-		raw_model.load_state_dict(resume_ck["model"])
-		assert len(resume_ck["optimizers"]) == len(optimizers), "optimizer set differs from the checkpoint's"
-		for opt, state in zip(optimizers, resume_ck["optimizers"]):
-			peak = [g["initial_lr"] for g in opt.param_groups]
-			opt.load_state_dict(state)       # moments and momentum buffers; this also restores old lrs,
-			for g, lr in zip(opt.param_groups, peak):
-				g["initial_lr"] = lr         # so put this run's peak LRs back (the schedule sets lr per step)
-		train_loader.rng.set_state(resume_ck["rng_state"])   # keep drawing new windows, not a replay
-		start_step = resume_ck.get("total_step", resume_ck["step"] + 1)
-
-	weight_count = sum(p.numel() for p in raw_model.parameters())
-	print(f"weights: {weight_count}")
-
-	tokens_per_update = total_batch_size * config.context_length
-	max_steps = config.max_steps
-
-	cooldown_frac = config.cooldown_frac
-	warmup_frac = config.warmup_frac
-	lr_scale = config.lr_scale
-	def get_lr(step: int):
-		x = step / max_steps
-		assert 0 <= x < 1
-		if x < warmup_frac:
-			return lr_scale * x / warmup_frac
-		if x > 1 - cooldown_frac:
-			w = (1 - x) / cooldown_frac
-			return lr_scale * (w * 1.0 + (1 - w) * 0.1)
-		return lr_scale
-
-	log_dir = "log"
-	os.makedirs(log_dir, exist_ok=True)
-
-	def optimizer_step(step):
-		"""Clip, set LR, step, then zero grads. Returns grad norm."""
-		norm = torch.nn.utils.clip_grad_norm_(raw_model.parameters(), 1).detach()
-		for opt in optimizers:
-			for group in opt.param_groups:
-				group["lr"] = group["initial_lr"] * get_lr(step)
-			opt.step()
-		raw_model.zero_grad(set_to_none=True)
-		return norm
-
-	ema_loss = None
-	ema_last_loss = None
-	ema_beta = 0.98  # averages over roughly the last 1/(1-beta) ≈ 50 steps
-
-	raw_model.zero_grad(set_to_none=True)
-
-	log_interval = config.log_interval
-	t0 = time.time()
-	last_log_step = -1
-
-	for step in range(0, max_steps):
-
-		accum = {
-			"loss": 0.0,
-			"loss_last": 0.0,
-		}
-
-		scale = 1.0 / grad_accum_steps
-		for micro_step in range(grad_accum_steps):
-			x, y, hint_tok, hint_bkt, doc_seg = train_loader.next_batch()
-			# Mark once per optimizer step, not per micro-step. A mark lets the next replay
-			# overwrite every earlier CUDA graph output -- including micro-step 0's gradients,
-			# which param.grad aliases until the next backward accumulates into it. Marking
-			# per micro-step therefore crashes under grad accumulation ("accessing tensor
-			# output of CUDAGraphs that has been overwritten"). nll is reduced before reuse.
-			if micro_step == 0:
-				torch.compiler.cudagraph_mark_step_begin()
-			nll = loss_fn(x, y, hint_tok, hint_bkt, doc_seg)
-			(nll.mean() * scale).backward()
-			nll = nll.detach()
-			accum["loss"] += nll.mean() * scale
-			accum["loss_last"] += nll[:, -1].mean() * scale
-
-		weight_norm = optimizer_step(step)
-
-		# EMAs stay on the device so steps that don't log never sync with the GPU
-		step_loss, last_loss = accum["loss"], accum["loss_last"]
-		ema_loss = step_loss if ema_loss is None else ema_beta * ema_loss + (1 - ema_beta) * step_loss
-		ema_last_loss = last_loss if ema_last_loss is None else ema_beta * ema_last_loss + (1 - ema_beta) * last_loss
-
-		if (step + 1) % log_interval == 0 or step == max_steps - 1:
-			if device_type == "cuda":
-				torch.cuda.synchronize()
-			t1 = time.time()
-			steps_since = step - last_log_step
-			dt = (t1 - t0) / steps_since   # mean seconds per step since the last log
-			tok_per_sec = tokens_per_update / dt
-			t0, last_log_step = t1, step
-
-			step_loss, last_loss = step_loss.item(), last_loss.item()
-			# size of the whole dataset if coded with the current model's loss
-			bytes_estimate = (step_loss * np.log2(np.e) * num_tokens) / 8
-
-			print(f"step {step:5d} | loss: {step_loss:.6f} | ema: {ema_loss.item():.6f} | "
-			      f"lr {get_lr(step):.4e} | dt: {dt*1000:.2f}ms | tok/sec: {tok_per_sec:.2f}")
-
-			wandb.log({
-				"loss": step_loss,
-				"ema_loss": ema_loss.item(),
-				"lr": get_lr(step),
-				"weight_norm": weight_norm.item(),
-				"last_loss": last_loss,
-				"ema_last_loss": ema_last_loss.item(),
-				'step': step,
-				'total_step': start_step + step + 1,
-				'dt': dt*1000,
-				"tokens": (step + 1) * tokens_per_update,
-				"bytes": bytes_estimate,
-			}, step=step)
-
-	run.summary["final_ema_loss"] = ema_loss.item()
-	run.summary["final_ema_last_loss"] = ema_last_loss.item()
-
-	checkpoint = {
-		'model': raw_model.state_dict(),
-		'optimizers': [o.state_dict() for o in optimizers],
-		'model_config': dataclasses.asdict(model_config),
-		'run_config': dict(config),
-		'step': step,
-		'total_step': start_step + step + 1,   # optimizer steps across this run and any it resumed
-		'resumed_from': config.resume,
-		'rng_state': train_loader.rng.get_state(),
-	}
-	checkpoint_path = os.path.join(log_dir, f"model_{run.id}_{step:05d}.pt")
-	torch.save(checkpoint, checkpoint_path)
-	print(f"saved checkpoint to {checkpoint_path}")
-
-	run.finish()
-
-	# Sweeps run many models back to back in one process: drop everything and reset
-	# dynamo, or compiled graphs and optimizer state pile up until you OOM.
-	del raw_model, loss_fn, optimizers, train_loader
-	gc.collect()
-	torch._dynamo.reset()
-	if device_type == "cuda":
-		torch.cuda.empty_cache()
+    def next(self):
+        i, self.i = self.i, (self.i + 1) % len(self.ring)
+        if self.events[i] is not None:
+            self.events[i].synchronize()
+        bufs = self.ring[i]
+        torch.randint(0, N - T, (B,), generator=self.gen, out=bufs[0])
+        for a, buf in zip(self.tables, bufs[1:]):
+            bn = buf.numpy()
+            # match features describe the byte being predicted, i.e. the target positions s+1..s+T
+            for r, s in enumerate(bufs[0].tolist()):
+                bn[r] = a[s + 1 : s + 1 + T]
+        out = [b.cuda(non_blocking=True) for b in bufs]
+        self.events[i] = torch.cuda.Event()
+        self.events[i].record()
+        return out[0], out[1:]
 
 
-sweep_config = {
-	'method': 'bayes',
-	'metric': {
-		'name': 'bytes',
-		'goal': 'minimize'
-	},
-	'parameters': {
-		'muon_lr': {'distribution': 'uniform', 'min': 0.0, 'max': 0.08},
-		'wte_lr': {'distribution': 'uniform', 'min': 0.0, 'max': 1.0},
-		'lm_head_lr': {'distribution': 'uniform', 'min': 0.0, 'max': 0.01},
-		'b_lr': {'distribution': 'uniform', 'min': 0.0, 'max': 0.03},
-		# 'muon_wd': {'distribution': 'uniform', 'min': 0.0, 'max': 0.029088727454488157*5},
-		# 'cooldown_frac': {'distribution': 'uniform', 'min': 0.0, 'max': 0.4},
-	}
-}
+batches = Batches(match_tables)
 
-if __name__ == "__main__":
-	if SWEEP:
-		sweep_id = SWEEP_ID or wandb.sweep(sweep_config, project="hutter")
-		print(f"sweep id: {sweep_id}")
-		wandb.agent(sweep_id, train, count=SWEEP_COUNT, project="hutter")
-	else:
-		train()
+torch.manual_seed(0)
+cfg = GPTConfig(
+    context_length=T,
+    vocab_size=VOCAB,
+    n_match=len(MATCH_K),
+    match_codes=matchfeat.N_CODE,
+)
+model = GPT(cfg).cuda()
+if INIT_FROM and not RESUME:
+    model.load_state_dict(torch.load(INIT_FROM, map_location="cuda", weights_only=True))
+    print(f"initialized weights from {INIT_FROM}")
+print(f"params: {sum(p.numel() for p in model.parameters())}")
+
+teacher = None
+if TEACHER:
+    t_sd = torch.load(TEACHER, map_location="cuda")
+    # a teacher trained with match features gets them too; its columns must be the first
+    # t_match entries of MATCH_K, built with the same code layout
+    t_match = t_sd["match_gate"].shape[0] if "match_gate" in t_sd else 0
+    assert t_sd["wte.weight"].shape[0] == VOCAB, (
+        "teacher was trained on a different vocab than DATA"
+    )
+    if t_match:
+        assert t_match <= len(MATCH_K), (
+            f"teacher has {t_match} match columns, MATCH_K has {len(MATCH_K)}"
+        )
+        assert t_sd["match_gate"].shape[1] == matchfeat.N_CODE, (
+            "teacher uses an older match code layout"
+        )
+    teacher = GPT(
+        GPTConfig(
+            context_length=T,
+            vocab_size=t_sd["wte.weight"].shape[0],
+            n_match=t_match,
+            match_codes=matchfeat.N_CODE,
+            **TEACHER_CFG,
+        )
+    ).cuda()
+    teacher.load_state_dict(t_sd)
+    del t_sd
+    teacher.eval().requires_grad_(False)
+    print(f"teacher params: {sum(p.numel() for p in teacher.parameters())}")
+
+lin = [m for m in model.h.modules() if isinstance(m, (FP8Linear, QATLinear))]
+convs = [m for m in model.h.modules() if isinstance(m, torch.nn.Conv1d)]
+attn_gates = [b.attn_gate for b in model.h if b.attn_gate is not None]
+muon_ps = [m.weight for m in lin]
+wte_ps = [model.wte.weight]
+head_ps = [] if cfg.tie_weights else [model.lm_head.weight]
+conv_ps = (
+    [m.weight for m in convs]
+    + [m.weight for m in attn_gates]
+    + ([model.match_ctx.weight, model.match_hit_emb, model.match_miss_emb] if cfg.n_match else [])
+)
+scalar_ps = [
+    p
+    for p in (
+        model.resid_lambdas,
+        model.x0_lambdas,
+        model.v_lambdas,
+        model.skip_lambdas,
+        model.pass_scale,
+        model.pass_shift,
+        model.loop_emb,
+        model.logit_scale,
+        *(
+            (
+                model.match_hit_scale,
+                model.match_miss_scale,
+                model.match_agree_scale,
+                model.match_hit_bias,
+                model.match_miss_bias,
+            )
+            if cfg.n_match
+            else ()
+        ),
+    )
+    if p is not None
+]
+assigned = {id(p) for p in muon_ps + wte_ps + head_ps + conv_ps + scalar_ps}
+bias_ps = [p for p in model.parameters() if id(p) not in assigned]
+assert len(assigned) + len(bias_ps) == len(list(model.parameters()))
+adamw = lambda ps, lr, wd=0.0: torch.optim.AdamW(ps, lr=lr, weight_decay=wd, fused=True)
+opts = [
+    adamw(wte_ps, LR_WTE, WD_ADAM),
+    *([adamw(head_ps, LR_HEAD, WD_ADAM)] if head_ps else []),
+    *([adamw(conv_ps, LR_CONV, WD_ADAM)] if conv_ps else []),
+    adamw(scalar_ps, LR_SCALAR, 0.0),
+    adamw(bias_ps, LR_BIAS, 0.0),
+    Muon(muon_ps, lr=LR_MUON, weight_decay=WD_MUON),
+]
+for o in opts:
+    for g in o.param_groups:
+        g["initial_lr"] = g["lr"]
+
+ema = None
+if EMA_DECAY:
+    # fp32 like the master weights: a bf16 EMA would round away the (1 - decay) * delta steps
+    ema = copy.deepcopy(model).requires_grad_(False)
+    ema_p, model_p = list(ema.parameters()), list(model.parameters())
+model.build_swa_mask()
+if cfg.qat_group:
+    qs = quantize_4bit_stats(model)
+    print(f"4-bit QAT (g={cfg.qat_group}): raw={qs['raw_mb']:.2f} MB, entropy-est={qs['entropy_mb']:.2f} MB ({qs['bits_per_qweight']:.2f} bpw)")
+eval_batches = [batches.next() for _ in range(EVAL_BATCHES)]
+start_step = 0
+if RESUME:
+    ckpt = torch.load(RESUME, map_location="cuda", weights_only=False)
+    model.load_state_dict(ckpt["model"])
+    if ema is not None and ckpt.get("ema") is not None:
+        ema.load_state_dict(ckpt["ema"])
+    for o, osd in zip(opts, ckpt["opts"]):
+        o.load_state_dict(osd)
+    start_step = ckpt["step"]
+    if "batch_gen_state" in ckpt:
+        batches.gen.set_state(ckpt["batch_gen_state"].cpu())
+    del ckpt
+    print(f"resumed full checkpoint from {RESUME} at step {start_step}")
+elif INIT_FROM:
+    # Keep eval_batches identical (seed=1234), then advance RNG so cooldown sees fresh windows
+    batches.gen.manual_seed(5678)
+
+
+@torch.no_grad()
+def eval_ce(m):
+    """Mean CE (nats/position) of m on the fixed eval batches, eager and uncompiled."""
+    tot = 0.0
+    for starts, match in eval_batches:
+        w = data[starts[:, None] + offs].long()
+        mp, ml = match if MATCH_K else (None, None)
+        with torch.autocast("cuda", torch.bfloat16):
+            logits = m(w[:, :-1], mp, ml)
+        tot += F.cross_entropy(logits.flatten(0, 1).float(), w[:, 1:].flatten()).item()
+    return tot / len(eval_batches)
+
+
+# the teacher runs as its own compiled function, outside the student's CUDA graph: capturing
+# both in one graph crashed with "invalid stream capture status" inside an FP8 _scaled_mm
+@torch.compile(mode="max-autotune-no-cudagraphs")
+def teacher_fn(x, mp, ml):
+    with torch.no_grad(), torch.autocast("cuda", torch.bfloat16):
+        return (
+            teacher(x, mp[..., :t_match], ml[..., :t_match]) if t_match else teacher(x)
+        )
+
+
+@torch.compile(mode="max-autotune")
+def loss_fn(x, y, mp, ml, t_logits):
+    with torch.autocast("cuda", torch.bfloat16):
+        logits = model(x, mp, ml)
+    logits = logits.flatten(0, 1).float()
+    ce = F.cross_entropy(logits, y.flatten())
+    if teacher is None:
+        return ce, ce, torch.zeros_like(ce)
+    t_logp = F.log_softmax(t_logits.flatten(0, 1).float() / KD_TEMP, -1)
+    s_logp = F.log_softmax(logits / KD_TEMP, -1)
+    kl = F.kl_div(s_logp, t_logp, log_target=True, reduction="batchmean")
+    return (1 - KD_ALPHA) * ce + KD_ALPHA * KD_TEMP**2 * kl, ce, kl
+
+
+def lr_mult(step):
+    if WARMUP > 0 and step < WARMUP:
+        return (step + 1) / WARMUP
+    if COOLDOWN >= 1.0:
+        return max(0.0, 1.0 - (step - WARMUP) / max(STEPS - WARMUP, 1))
+    return min(1.0, (1.0 - step / STEPS) / COOLDOWN)
+
+
+wandb.init(
+    project="hutter",
+    config=dict(
+        B=B,
+        ACCUM=ACCUM,
+        T=T,
+        STEPS=STEPS,
+        LR_MUON=LR_MUON,
+        LR_WTE=LR_WTE,
+        LR_HEAD=LR_HEAD,
+        LR_CONV=LR_CONV,
+        LR_SCALAR=LR_SCALAR,
+        LR_BIAS=LR_BIAS,
+        WD_MUON=WD_MUON,
+        WD_ADAM=WD_ADAM,
+        WARMUP=WARMUP,
+        COOLDOWN=COOLDOWN,
+        INIT_FROM=INIT_FROM,
+        RESUME=RESUME,
+        EMA_DECAY=EMA_DECAY,
+        EVAL_BATCHES=EVAL_BATCHES,
+        DATA=DATA,
+        VOCAB=VOCAB,
+        TEACHER=TEACHER,
+        TEACHER_CFG=TEACHER_CFG if TEACHER else None,
+        KD_ALPHA=KD_ALPHA if TEACHER else None,
+        KD_TEMP=KD_TEMP if TEACHER else None,
+        MATCH_K=MATCH_K,
+        MATCH_TABLE_BITS=matchfeat.TABLE_BITS,
+        MATCH_DIST_EDGES=matchfeat.DIST_EDGES,
+        params=sum(p.numel() for p in model.parameters()),
+        **vars(cfg),
+    ),
+)
+
+# Warm up cuBLASLt FP8 workspace eagerly before CUDA graph capture (prevents
+# intermittent "invalid stream capture status" inside _scaled_mm on cached restarts)
+init_ce = eval_ce(model)
+if INIT_FROM or RESUME:
+    init_bpb = init_ce / math.log(2) * N / N_BYTES
+    print(f"step {start_step} | init_eval_loss {init_ce:.4f} | init_eval_bpb {init_bpb:.4f}")
+
+log = open("log.csv", "a" if RESUME else "w", buffering=1)
+if not RESUME:
+    log.write("step,loss,bpb,bytes,ms_per_step\n")
+t0 = time.time()
+for step in range(start_step, STEPS):
+    torch.compiler.cudagraph_mark_step_begin()
+    loss = kl = 0.0
+    for _ in range(ACCUM):
+        starts, match = batches.next()
+        w = data[starts[:, None] + offs].long()
+        mp, ml = match if MATCH_K else (None, None)
+        x = w[:, :-1]
+        t_logits = teacher_fn(x, mp, ml) if teacher is not None else None
+        l, ce, k = loss_fn(x, w[:, 1:], mp, ml, t_logits)
+        (l / ACCUM).backward()
+        loss += ce.detach() / ACCUM
+        kl += k.detach() / ACCUM
+    gnorm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1)
+    for o in opts:
+        for g in o.param_groups:
+            g["lr"] = g["initial_lr"] * lr_mult(step)
+        o.step()
+    model.zero_grad(set_to_none=True)
+    if ema is not None:
+        decay = EMA_DECAY if (INIT_FROM or RESUME) else min(EMA_DECAY, (1 + step) / (10 + step))
+        torch._foreach_lerp_(ema_p, model_p, 1 - decay)
+
+    if (step + 1) % LOG == 0 or step == STEPS - 1:
+        loss, kl = loss.item(), kl.item()
+        # loss is nats per position; total archive-equivalent bytes, then bits per raw byte
+        total = loss / math.log(2) * N / 8
+        bpb = total * 8 / N_BYTES
+        dt = (time.time() - t0) / LOG
+        t0 = time.time()
+        print(
+            f"step {step + 1} | loss {loss:.4f}{f' | kl {kl:.4f}' if teacher is not None else ''} | bpb {bpb:.4f} | bytes {total:,.0f} | {dt * 1000:.1f}ms/step"
+        )
+        log.write(f"{step + 1},{loss:.6f},{bpb:.6f},{total:.0f},{dt * 1000:.2f}\n")
+        wandb.log(
+            dict(
+                loss=loss,
+                bpb=bpb,
+                **(dict(kl=kl) if teacher is not None else {}),
+                bytes=total,
+                ms_per_step=dt * 1000,
+                grad_norm=gnorm.item(),
+                lr_mult=lr_mult(step),
+            ),
+            step=step + 1,
+        )
+
+    if (step + 1) % CKPT == 0 or step == STEPS - 1:
+        to_bpb = lambda ce: ce / math.log(2) * N / N_BYTES
+        ev = dict(eval_loss=eval_ce(model))
+        if ema is not None:
+            ev["ema_eval_loss"] = eval_ce(ema)
+        ev.update({k.replace("loss", "bpb"): to_bpb(v) for k, v in list(ev.items())})
+        print(f"step {step + 1} | " + " | ".join(f"{k} {v:.4f}" for k, v in ev.items()))
+        wandb.log(ev, step=step + 1)
+        torch.save(model.state_dict(), "model.pt")
+        if ema is not None:
+            torch.save(ema.state_dict(), "model_ema.pt")
+        torch.save(
+            dict(
+                step=step + 1,
+                model=model.state_dict(),
+                ema=ema.state_dict() if ema is not None else None,
+                opts=[o.state_dict() for o in opts],
+                batch_gen_state=batches.gen.get_state(),
+            ),
+            "ckpt.pt",
+        )
+
+wandb.finish()

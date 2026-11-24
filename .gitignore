@@ -1,10 +1,12 @@
 __pycache__/
+.venv/
 log/
 wandb/
 model/
 compressed_model/
 *.zip
 *.pt
+*.i16
 *.exe
 *.json
 *.npy

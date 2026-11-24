@@ -1,0 +1,1036 @@
+data: enwik9.split4096 | 357,813,851 positions, vocab 4096, 2.795 bytes/position
+match k= 2:   1.4s | hit on  99.1% of bytes, correct on  39.4% of those
+match k= 3:   1.5s | hit on  88.8% of bytes, correct on  46.6% of those
+match k= 5:   1.6s | hit on  52.5% of bytes, correct on  63.8% of those
+match k= 8:   1.6s | hit on  30.5% of bytes, correct on  78.9% of those
+match k=13:   1.7s | hit on  19.7% of bytes, correct on  85.0% of those
+match k=27:   1.9s | hit on   9.1% of bytes, correct on  91.4% of those
+match tables written to enwik9.split4096.match_7b25783e64.{pred,code}.npy
+params: 6268130
+wandb: [wandb.login()] Loaded credentials for https://api.forge.coreweave.com from /home/brady/.netrc.
+wandb: Currently logged in as: bradywynn to https://api.forge.coreweave.com. Use `wandb login --relogin` to force relogin
+wandb: Tracking run with wandb version 0.31.0
+wandb: Run data is saved locally in /home/brady/hutter/wandb/run-20261124_150950-8d2iwazm
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run frosty-silence-19
+wandb: ⭐️ View project at https://forge.coreweave.com/wandb/bradywynn/hutter
+wandb: 🚀 View run at https://forge.coreweave.com/wandb/bradywynn/hutter/runs/8d2iwazm
+/home/brady/hutter/.venv/lib/python3.11/site-packages/triton/knobs.py:504: UserWarning: TRITON_DEFAULT_FP_FUSION is unset: defaulting to FP fusion ENABLED for backward compatibility in Triton 3.9. The default will change to DISABLED in Triton 3.10; set TRITON_DEFAULT_FP_FUSION=1 to keep fusion enabled or =0 to adopt the new default early and silence this warning.
+  warn_once(FP_FUSION_DEFAULT_WARNING)
+Autotune Choices Stats:
+{"num_choices": 7, "num_triton_choices": 7, "best_kernel": "triton_flex_attention_162", "best_kernel_desc": "BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M=128, BLOCK_N=64, FLOAT32_PRECISION=\"'tf32'\", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=2, num_warps=4", "best_time": 1.7367039918899536, "best_triton_pos": 0}
+AUTOTUNE flex_attention(16x4x2048x64, 16x2x2048x64, 16x2x2048x64, 16x4x2048, 16x4x2048, 1x1x16, 1x1x16x16, 1x1x16, 1x1x16x16)
+strides: [524288, 1, 256, 4], [262144, 1, 128, 2], [1048576, 64, 512, 1], [8192, 2048, 1], [8192, 2048, 1], [16, 16, 1], [256, 1, 16, 1], [16, 16, 1], [256, 1, 16, 1]
+dtypes: torch.bfloat16, torch.bfloat16, torch.bfloat16, torch.float32, torch.float32, torch.int32, torch.int32, torch.int32, torch.int32
+  triton_flex_attention_162 1.7367 ms 100.0% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M=128, BLOCK_N=64, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=2, num_warps=4
+  triton_flex_attention_156 1.7787 ms 97.6% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M=128, BLOCK_N=64, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=3, num_warps=4
+  triton_flex_attention_161 2.0183 ms 86.0% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M=64, BLOCK_N=64, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=3, num_warps=4
+  triton_flex_attention_159 2.1862 ms 79.4% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M=128, BLOCK_N=128, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=1, num_warps=8
+  triton_flex_attention_158 2.2252 ms 78.0% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M=128, BLOCK_N=128, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=2, num_warps=8
+  triton_flex_attention_160 2.2600 ms 76.8% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M=64, BLOCK_N=128, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=3, num_warps=4
+  triton_flex_attention_157 2.9020 ms 59.8% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M=128, BLOCK_N=128, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=3, num_warps=4
+SingleProcess AUTOTUNE benchmarking takes 0.3609 seconds and 2.2148 seconds precompiling for 7 choices
+Autotune Choices Stats:
+{"num_choices": 7, "num_triton_choices": 7, "best_kernel": "triton_flex_attention_616", "best_kernel_desc": "BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M=128, BLOCK_N=64, FLOAT32_PRECISION=\"'tf32'\", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=3, num_warps=4", "best_time": 1.8114559650421143, "best_triton_pos": 0}
+AUTOTUNE flex_attention(16x4x2048x64, 16x2x2048x64, 16x2x2048x64, 16x4x2048, 16x4x2048, 1x1x16, 1x1x16x16, 1x1x16, 1x1x16x16)
+strides: [524288, 1, 256, 4], [262144, 1, 128, 2], [262144, 1, 128, 2], [8192, 2048, 1], [8192, 2048, 1], [16, 16, 1], [256, 1, 16, 1], [16, 16, 1], [256, 1, 16, 1]
+dtypes: torch.bfloat16, torch.bfloat16, torch.bfloat16, torch.float32, torch.float32, torch.int32, torch.int32, torch.int32, torch.int32
+  triton_flex_attention_616 1.8115 ms 100.0% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M=128, BLOCK_N=64, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=3, num_warps=4
+  triton_flex_attention_622 1.8258 ms 99.2% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M=128, BLOCK_N=64, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=2, num_warps=4
+  triton_flex_attention_620 2.0726 ms 87.4% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M=64, BLOCK_N=128, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=3, num_warps=4
+  triton_flex_attention_621 2.2702 ms 79.8% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M=64, BLOCK_N=64, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=3, num_warps=4
+  triton_flex_attention_618 2.3132 ms 78.3% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M=128, BLOCK_N=128, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=2, num_warps=8
+  triton_flex_attention_619 2.3132 ms 78.3% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M=128, BLOCK_N=128, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=1, num_warps=8
+  triton_flex_attention_617 2.5416 ms 71.3% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M=128, BLOCK_N=128, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=3, num_warps=4
+SingleProcess AUTOTUNE benchmarking takes 0.3483 seconds and 8.2311 seconds precompiling for 7 choices
+Autotune Choices Stats:
+{"num_choices": 106, "num_triton_choices": 105, "best_kernel": "triton_mm_3052", "best_kernel_desc": "ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=128, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=4", "best_time": 0.14131200313568115, "best_triton_pos": 0}
+AUTOTUNE scaled_mm(32768x256, 256x1408, , )
+strides: [256, 1], [1, 256], [], []
+dtypes: torch.float8_e4m3fn, torch.float8_e4m3fn, torch.float32, torch.float32
+  triton_mm_3052 0.1413 ms 100.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=128, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=4
+  triton_mm_3043 0.1509 ms 93.7% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=128, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=4
+  triton_mm_3053 0.1516 ms 93.2% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=64, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=4
+  triton_mm_3049 0.1549 ms 91.2% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=128, BLOCK_M=256, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=4
+  triton_mm_3138 0.1549 ms 91.2% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=128, BLOCK_M=64, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=2, num_warps=4
+  triton_mm_3140 0.1577 ms 89.6% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=128, BLOCK_M=128, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=2, num_warps=4
+  _scaled_mm 0.1597 ms 88.5% 
+  triton_mm_3070 0.1618 ms 87.3% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=32, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=2, num_warps=4
+  triton_mm_3086 0.1618 ms 87.3% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=32, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=4
+  triton_mm_3102 0.1618 ms 87.3% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=32, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=4
+SingleProcess AUTOTUNE benchmarking takes 5.1845 seconds and 0.0003 seconds precompiling for 106 choices
+Autotune Choices Stats:
+{"num_choices": 19, "num_triton_choices": 18, "best_kernel": "triton_mm_20", "best_kernel_desc": "ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=16, BLOCK_M=32, BLOCK_N=64, EVEN_K=False, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=5, num_warps=8", "best_time": 0.018432000651955605, "best_triton_pos": 0}
+AUTOTUNE mm(32768x6, 6x256)
+strides: [6, 1], [256, 1]
+dtypes: torch.bfloat16, torch.bfloat16
+  triton_mm_20 0.0184 ms 100.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=16, BLOCK_M=32, BLOCK_N=64, EVEN_K=False, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=5, num_warps=8
+  triton_mm_26 0.0184 ms 100.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=16, BLOCK_M=64, BLOCK_N=128, EVEN_K=False, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=4
+  triton_mm_28 0.0184 ms 100.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=16, BLOCK_M=64, BLOCK_N=128, EVEN_K=False, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=4
+  triton_mm_31 0.0184 ms 100.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=16, BLOCK_M=128, BLOCK_N=128, EVEN_K=False, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=2, num_warps=8
+  triton_mm_32 0.0184 ms 100.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=16, BLOCK_M=128, BLOCK_N=128, EVEN_K=False, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=4
+  triton_mm_34 0.0184 ms 100.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=16, BLOCK_M=128, BLOCK_N=128, EVEN_K=False, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=8
+  triton_mm_35 0.0197 ms 93.7% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=16, BLOCK_M=128, BLOCK_N=256, EVEN_K=False, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=8
+  triton_mm_19 0.0205 ms 90.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=16, BLOCK_M=32, BLOCK_N=32, EVEN_K=False, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=2, num_warps=4
+  triton_mm_21 0.0205 ms 90.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=16, BLOCK_M=64, BLOCK_N=32, EVEN_K=False, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=5, num_warps=8
+  triton_mm_23 0.0205 ms 90.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=16, BLOCK_M=64, BLOCK_N=64, EVEN_K=False, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=2, num_warps=4
+SingleProcess AUTOTUNE benchmarking takes 0.3280 seconds and 0.0007 seconds precompiling for 19 choices
+Autotune Choices Stats:
+{"num_choices": 106, "num_triton_choices": 105, "best_kernel": "_scaled_mm", "best_time": 0.06351999938488007, "best_triton_pos": 1, "best_triton_time": 0.07276800274848938, "best_triton_kernel": "triton_mm_404", "best_triton_kernel_desc": "ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=128, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=4"}
+AUTOTUNE scaled_mm(32768x704, 704x256, , )
+strides: [704, 1], [1, 704], [], []
+dtypes: torch.float8_e4m3fn, torch.float8_e4m3fn, torch.float32, torch.float32
+  _scaled_mm 0.0635 ms 100.0% 
+  triton_mm_404 0.0728 ms 87.3% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=128, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=4
+  triton_mm_405 0.0737 ms 86.2% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=64, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=4
+  triton_mm_491 0.0792 ms 80.2% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=128, BLOCK_M=64, BLOCK_N=128, EVEN_K=False, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=4
+  triton_mm_454 0.0812 ms 78.2% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=32, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=4
+  triton_mm_490 0.0819 ms 77.5% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=128, BLOCK_M=64, BLOCK_N=128, EVEN_K=False, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=2, num_warps=4
+  triton_mm_438 0.0830 ms 76.6% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=32, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=4
+  triton_mm_470 0.0832 ms 76.4% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=32, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=5, num_warps=4
+  triton_mm_406 0.0832 ms 76.3% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=128, BLOCK_N=32, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=4
+  triton_mm_439 0.0833 ms 76.3% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=32, BLOCK_N=256, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=4
+SingleProcess AUTOTUNE benchmarking takes 4.5801 seconds and 0.0027 seconds precompiling for 106 choices
+Autotune Choices Stats:
+{"num_choices": 19, "num_triton_choices": 18, "best_kernel": "triton_mm_5562", "best_kernel_desc": "ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=64, BLOCK_N=16, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=2, num_warps=4", "best_time": 0.02377600036561489, "best_triton_pos": 0}
+AUTOTUNE addmm(32768x6, 32768x256, 256x6)
+strides: [0, 1], [256, 1], [1, 256]
+dtypes: torch.bfloat16, torch.bfloat16, torch.bfloat16
+  triton_mm_5562 0.0238 ms 100.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=64, BLOCK_N=16, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=2, num_warps=4
+  triton_mm_5563 0.0239 ms 99.5% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=64, BLOCK_N=16, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=4
+  triton_mm_5573 0.0239 ms 99.3% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=128, BLOCK_N=16, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=8
+  triton_mm_5564 0.0246 ms 96.7% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=64, BLOCK_N=16, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=4
+  triton_mm_5567 0.0246 ms 96.7% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=128, BLOCK_N=16, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=4
+  triton_mm_5569 0.0246 ms 96.7% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=128, BLOCK_N=16, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=2, num_warps=8
+  triton_mm_5560 0.0253 ms 93.8% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=128, BLOCK_M=64, BLOCK_N=16, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=5, num_warps=4
+  triton_mm_5559 0.0254 ms 93.6% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=64, BLOCK_N=16, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=5, num_warps=4
+  triton_mm_5572 0.0256 ms 93.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=128, BLOCK_M=128, BLOCK_N=16, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=8
+  triton_mm_5566 0.0259 ms 92.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=128, BLOCK_M=64, BLOCK_N=16, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=4
+SingleProcess AUTOTUNE benchmarking takes 0.5522 seconds and 0.0007 seconds precompiling for 19 choices
+Autotune Choices Stats:
+{"num_choices": 13, "num_triton_choices": 13, "best_kernel": "triton_flex_attention_backward_7152", "best_kernel_desc": "BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M1=64, BLOCK_M2=64, BLOCK_N1=64, BLOCK_N2=64, FLOAT32_PRECISION=\"'tf32'\", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=2, num_warps=4", "best_time": 7.163904190063477, "best_triton_pos": 0}
+AUTOTUNE flex_attention_backward(16x4x2048x64, 16x2x2048x64, 16x2x2048x64, 16x4x2048, 16x4x2048, 16x4x2048x64, 16x4x2048x64, 16x2x2048x64, 1x1x16, 1x1x16x16, 1x1x16, 1x1x16x16, 1x1x16, 1x1x16x16, 1x1x16, 1x1x16x16)
+strides: [524288, 1, 256, 4], [262144, 1, 128, 2], [262144, 1, 128, 2], [8192, 2048, 1], [8192, 2048, 1], [524288, 64, 256, 1], [524288, 64, 256, 1], [262144, 64, 128, 1], [16, 16, 1], [256, 256, 16, 1], [16, 16, 1], [256, 256, 16, 1], [16, 16, 1], [256, 256, 16, 1], [16, 16, 1], [256, 256, 16, 1]
+dtypes: torch.bfloat16, torch.bfloat16, torch.bfloat16, torch.float32, torch.float32, torch.bfloat16, torch.bfloat16, torch.bfloat16, torch.int32, torch.int32, torch.int32, torch.int32, torch.int32, torch.int32, torch.int32, torch.int32
+  triton_flex_attention_backward_7152 7.1639 ms 100.0% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M1=64, BLOCK_M2=64, BLOCK_N1=64, BLOCK_N2=64, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=2, num_warps=4
+  triton_flex_attention_backward_7149 7.9565 ms 90.0% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M1=64, BLOCK_M2=64, BLOCK_N1=64, BLOCK_N2=64, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=3, num_warps=4
+  triton_flex_attention_backward_7148 8.3907 ms 85.4% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M1=64, BLOCK_M2=64, BLOCK_N1=64, BLOCK_N2=64, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=1, num_warps=4
+  triton_flex_attention_backward_7150 12.5338 ms 57.2% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M1=64, BLOCK_M2=64, BLOCK_N1=64, BLOCK_N2=64, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=4, num_warps=4
+  triton_flex_attention_backward_7146 13.0990 ms 54.7% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M1=32, BLOCK_M2=64, BLOCK_N1=64, BLOCK_N2=32, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=4, num_warps=4
+  triton_flex_attention_backward_7145 13.1196 ms 54.6% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M1=32, BLOCK_M2=64, BLOCK_N1=64, BLOCK_N2=32, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=3, num_warps=4
+  triton_flex_attention_backward_7144 13.3130 ms 53.8% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M1=32, BLOCK_M2=64, BLOCK_N1=64, BLOCK_N2=32, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=1, num_warps=4
+  triton_flex_attention_backward_7151 13.3915 ms 53.5% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M1=64, BLOCK_M2=64, BLOCK_N1=64, BLOCK_N2=64, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=5, num_warps=4
+  triton_flex_attention_backward_7147 13.3960 ms 53.5% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M1=32, BLOCK_M2=64, BLOCK_N1=64, BLOCK_N2=32, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=5, num_warps=4
+  triton_flex_attention_backward_7140 23.0697 ms 31.1% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M1=32, BLOCK_M2=32, BLOCK_N1=32, BLOCK_N2=32, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=1, num_warps=4
+SingleProcess AUTOTUNE benchmarking takes 1.6758 seconds and 8.9467 seconds precompiling for 13 choices
+Autotune Choices Stats:
+{"num_choices": 13, "num_triton_choices": 13, "best_kernel": "triton_flex_attention_backward_15833", "best_kernel_desc": "BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M1=64, BLOCK_M2=64, BLOCK_N1=64, BLOCK_N2=64, FLOAT32_PRECISION=\"'tf32'\", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=3, num_warps=4", "best_time": 7.009280204772949, "best_triton_pos": 0}
+AUTOTUNE flex_attention_backward(16x4x2048x64, 16x2x2048x64, 16x2x2048x64, 16x4x2048, 16x4x2048, 16x4x2048x64, 16x4x2048x64, 16x2x2048x64, 1x1x16, 1x1x16x16, 1x1x16, 1x1x16x16, 1x1x16, 1x1x16x16, 1x1x16, 1x1x16x16)
+strides: [524288, 1, 256, 4], [262144, 1, 128, 2], [1048576, 64, 512, 1], [8192, 2048, 1], [8192, 2048, 1], [524288, 64, 256, 1], [524288, 64, 256, 1], [262144, 64, 128, 1], [16, 16, 1], [256, 256, 16, 1], [16, 16, 1], [256, 256, 16, 1], [16, 16, 1], [256, 256, 16, 1], [16, 16, 1], [256, 256, 16, 1]
+dtypes: torch.bfloat16, torch.bfloat16, torch.bfloat16, torch.float32, torch.float32, torch.bfloat16, torch.bfloat16, torch.bfloat16, torch.int32, torch.int32, torch.int32, torch.int32, torch.int32, torch.int32, torch.int32, torch.int32
+  triton_flex_attention_backward_15833 7.0093 ms 100.0% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M1=64, BLOCK_M2=64, BLOCK_N1=64, BLOCK_N2=64, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=3, num_warps=4
+  triton_flex_attention_backward_15836 7.0630 ms 99.2% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M1=64, BLOCK_M2=64, BLOCK_N1=64, BLOCK_N2=64, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=2, num_warps=4
+  triton_flex_attention_backward_15832 7.4363 ms 94.3% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M1=64, BLOCK_M2=64, BLOCK_N1=64, BLOCK_N2=64, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=1, num_warps=4
+  triton_flex_attention_backward_15829 10.1468 ms 69.1% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M1=32, BLOCK_M2=64, BLOCK_N1=64, BLOCK_N2=32, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=3, num_warps=4
+  triton_flex_attention_backward_15830 10.2943 ms 68.1% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M1=32, BLOCK_M2=64, BLOCK_N1=64, BLOCK_N2=32, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=4, num_warps=4
+  triton_flex_attention_backward_15828 10.4765 ms 66.9% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M1=32, BLOCK_M2=64, BLOCK_N1=64, BLOCK_N2=32, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=1, num_warps=4
+  triton_flex_attention_backward_15831 10.6020 ms 66.1% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M1=32, BLOCK_M2=64, BLOCK_N1=64, BLOCK_N2=32, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=5, num_warps=4
+  triton_flex_attention_backward_15834 11.3644 ms 61.7% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M1=64, BLOCK_M2=64, BLOCK_N1=64, BLOCK_N2=64, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=4, num_warps=4
+  triton_flex_attention_backward_15835 11.4125 ms 61.4% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M1=64, BLOCK_M2=64, BLOCK_N1=64, BLOCK_N2=64, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=5, num_warps=4
+  triton_flex_attention_backward_15824 16.4035 ms 42.7% BLOCKS_ARE_CONTIGUOUS=False, BLOCK_M1=32, BLOCK_M2=32, BLOCK_N1=32, BLOCK_N2=32, FLOAT32_PRECISION="'tf32'", GQA_SHARED_HEADS=2, HAS_FULL_BLOCKS=True, IS_DIVISIBLE=True, OUTPUT_LOGSUMEXP=True, OUTPUT_MAX=False, PRESCALE_QK=False, QK_HEAD_DIM=64, QK_HEAD_DIM_ROUNDED=64, ROWS_GUARANTEED_SAFE=False, SAFE_HEAD_DIM=True, SM_SCALE=0.125, SPARSE_KV_BLOCK_SIZE=128, SPARSE_Q_BLOCK_SIZE=128, USE_TMA=False, V_HEAD_DIM=64, V_HEAD_DIM_ROUNDED=64, WRITE_DQ=True, num_stages=1, num_warps=4
+SingleProcess AUTOTUNE benchmarking takes 1.4134 seconds and 4.6324 seconds precompiling for 13 choices
+Autotune Choices Stats:
+{"num_choices": 106, "num_triton_choices": 105, "best_kernel": "_scaled_mm", "best_time": 0.1693120002746582, "best_triton_pos": 1, "best_triton_time": 0.20684799551963806, "best_triton_kernel": "triton_mm_11247", "best_triton_kernel_desc": "ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=256, BLOCK_M=64, BLOCK_N=32, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=5, num_warps=4"}
+AUTOTUNE scaled_mm(1408x32768, 32768x256, , )
+strides: [32768, 1], [1, 32768], [], []
+dtypes: torch.float8_e5m2, torch.float8_e4m3fn, torch.float32, torch.float32
+  _scaled_mm 0.1693 ms 100.0% 
+  triton_mm_11247 0.2068 ms 81.9% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=256, BLOCK_M=64, BLOCK_N=32, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=5, num_warps=4
+  triton_mm_11249 0.2079 ms 81.4% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=128, BLOCK_M=64, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=4
+  triton_mm_11162 0.2100 ms 80.6% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=128, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=4
+  triton_mm_11165 0.2144 ms 79.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=64, BLOCK_N=32, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=5, num_warps=2
+  triton_mm_11227 0.2150 ms 78.7% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=32, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=5, num_warps=2
+  triton_mm_11164 0.2164 ms 78.2% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=128, BLOCK_N=32, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=4
+  triton_mm_11211 0.2171 ms 78.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=32, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=2
+  triton_mm_11229 0.2205 ms 76.8% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=32, BLOCK_N=256, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=5, num_warps=4
+  triton_mm_11245 0.2222 ms 76.2% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=32, BLOCK_N=256, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=6, num_warps=4
+SingleProcess AUTOTUNE benchmarking takes 5.4778 seconds and 0.0003 seconds precompiling for 106 choices
+Autotune Choices Stats:
+{"num_choices": 106, "num_triton_choices": 105, "best_kernel": "_scaled_mm", "best_time": 0.08934400230646133, "best_triton_pos": 1, "best_triton_time": 0.12137600034475327, "best_triton_kernel": "triton_mm_11033", "best_triton_kernel_desc": "ACC_TYPE='tl.float32', ALLOW_TF32=True, BLOCK_K=64, BLOCK_M=32, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=6, num_warps=2"}
+AUTOTUNE scaled_mm(256x32768, 32768x704, , )
+strides: [32768, 1], [1, 32768], [], []
+dtypes: torch.float8_e5m2, torch.float8_e4m3fn, torch.float32, torch.float32
+  _scaled_mm 0.0893 ms 100.0% 
+  triton_mm_11033 0.1214 ms 73.6% ACC_TYPE='tl.float32', ALLOW_TF32=True, BLOCK_K=64, BLOCK_M=32, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=6, num_warps=2
+  triton_mm_11032 0.1222 ms 73.1% ACC_TYPE='tl.float32', ALLOW_TF32=True, BLOCK_K=64, BLOCK_M=32, BLOCK_N=32, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=6, num_warps=2
+  triton_mm_11017 0.1239 ms 72.1% ACC_TYPE='tl.float32', ALLOW_TF32=True, BLOCK_K=64, BLOCK_M=32, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=5, num_warps=2
+  triton_mm_11016 0.1242 ms 71.9% ACC_TYPE='tl.float32', ALLOW_TF32=True, BLOCK_K=64, BLOCK_M=32, BLOCK_N=32, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=5, num_warps=2
+  triton_mm_10955 0.1249 ms 71.5% ACC_TYPE='tl.float32', ALLOW_TF32=True, BLOCK_K=64, BLOCK_M=64, BLOCK_N=32, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=5, num_warps=2
+  triton_mm_11034 0.1249 ms 71.5% ACC_TYPE='tl.float32', ALLOW_TF32=True, BLOCK_K=64, BLOCK_M=32, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=6, num_warps=4
+  triton_mm_11001 0.1270 ms 70.4% ACC_TYPE='tl.float32', ALLOW_TF32=True, BLOCK_K=64, BLOCK_M=32, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=2
+  triton_mm_11018 0.1270 ms 70.4% ACC_TYPE='tl.float32', ALLOW_TF32=True, BLOCK_K=64, BLOCK_M=32, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=5, num_warps=4
+  triton_mm_11000 0.1290 ms 69.2% ACC_TYPE='tl.float32', ALLOW_TF32=True, BLOCK_K=64, BLOCK_M=32, BLOCK_N=32, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=2
+SingleProcess AUTOTUNE benchmarking takes 5.1828 seconds and 0.0003 seconds precompiling for 106 choices
+Autotune Choices Stats:
+{"num_choices": 8, "num_triton_choices": 0, "best_kernel": "decompose_k_mm_32_split_95", "best_kernel_desc": "k_split=32", "best_time": 0.02860799990594387}
+AUTOTUNE mm(6x32768, 32768x256)
+strides: [1, 6], [256, 1]
+dtypes: torch.bfloat16, torch.bfloat16
+  decompose_k_mm_32_split_95 0.0286 ms 100.0% k_split=32
+  decompose_k_mm_64_split_96 0.0286 ms 100.0% k_split=64
+  decompose_k_mm_128_split_97 0.0317 ms 90.1% k_split=128
+  mm 0.0328 ms 87.3% 
+  decompose_k_mm_16_split_94 0.0348 ms 82.2% k_split=16
+  decompose_k_mm_8_split_93 0.0491 ms 58.3% k_split=8
+  decompose_k_mm_4_split_92 0.0767 ms 37.3% k_split=4
+  decompose_k_mm_2_split_91 0.1372 ms 20.8% k_split=2
+SingleProcess AUTOTUNE benchmarking takes 4.4934 seconds and 0.0001 seconds precompiling for 8 choices
+Autotune Choices Stats:
+{"num_choices": 106, "num_triton_choices": 105, "best_kernel": "_scaled_mm", "best_time": 0.07308799773454666, "best_triton_pos": 1, "best_triton_time": 0.07580800354480743, "best_triton_kernel": "triton_mm_5647", "best_triton_kernel_desc": "ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=128, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=4"}
+AUTOTUNE scaled_mm(32768x256, 256x704, , )
+strides: [256, 1], [1, 256], [], []
+dtypes: torch.float8_e5m2, torch.float8_e4m3fn, torch.float32, torch.float32
+  _scaled_mm 0.0731 ms 100.0% 
+  triton_mm_5647 0.0758 ms 96.4% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=128, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=4
+  triton_mm_5638 0.0839 ms 87.1% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=128, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=4
+  triton_mm_5644 0.0840 ms 87.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=128, BLOCK_M=256, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=4
+  triton_mm_5733 0.0867 ms 84.3% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=128, BLOCK_M=64, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=2, num_warps=4
+  triton_mm_5649 0.0894 ms 81.8% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=128, BLOCK_N=32, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=4
+  triton_mm_5636 0.0922 ms 79.3% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=256, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=4
+  triton_mm_5735 0.0922 ms 79.3% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=128, BLOCK_M=128, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=2, num_warps=4
+  triton_mm_5639 0.0934 ms 78.2% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=128, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=4
+  triton_mm_5648 0.0942 ms 77.6% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=64, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=4
+SingleProcess AUTOTUNE benchmarking takes 4.7230 seconds and 0.0003 seconds precompiling for 106 choices
+Autotune Choices Stats:
+{"num_choices": 106, "num_triton_choices": 105, "best_kernel": "_scaled_mm", "best_time": 0.1085439994931221, "best_triton_pos": 1, "best_triton_time": 0.1364479959011078, "best_triton_kernel": "triton_mm_5944", "best_triton_kernel_desc": "ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=128, BLOCK_M=64, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=4"}
+AUTOTUNE scaled_mm(32768x1408, 1408x256, , )
+strides: [1408, 1], [1, 1408], [], []
+dtypes: torch.float8_e5m2, torch.float8_e4m3fn, torch.float32, torch.float32
+  _scaled_mm 0.1085 ms 100.0% 
+  triton_mm_5944 0.1364 ms 79.5% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=128, BLOCK_M=64, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=4
+  triton_mm_5858 0.1365 ms 79.5% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=64, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=4
+  triton_mm_5857 0.1375 ms 78.9% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=128, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=4
+  triton_mm_5943 0.1427 ms 76.1% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=128, BLOCK_M=64, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=2, num_warps=4
+  triton_mm_5892 0.1505 ms 72.1% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=32, BLOCK_N=256, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=4
+  triton_mm_5907 0.1505 ms 72.1% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=32, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=4
+  triton_mm_5859 0.1507 ms 72.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=128, BLOCK_N=32, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=4
+  triton_mm_5853 0.1508 ms 72.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=128, BLOCK_M=256, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=8
+  triton_mm_5945 0.1508 ms 72.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=128, BLOCK_M=128, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=2, num_warps=4
+SingleProcess AUTOTUNE benchmarking takes 5.0560 seconds and 0.0003 seconds precompiling for 106 choices
+Autotune Choices Stats:
+{"num_choices": 22, "num_triton_choices": 21, "best_kernel": "triton_bmm_16915", "best_kernel_desc": "ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=64, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=8", "best_time": 0.020479999482631683, "best_triton_pos": 0}
+AUTOTUNE bmm(7x256x256, 7x256x1408)
+strides: [65536, 256, 1], [360448, 1408, 1]
+dtypes: torch.bfloat16, torch.bfloat16
+  triton_bmm_16915 0.0205 ms 100.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=64, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=8
+  triton_bmm_16917 0.0205 ms 100.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=64, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=4
+  triton_bmm_16918 0.0205 ms 100.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=64, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=8
+  triton_bmm_16922 0.0216 ms 95.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=128, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=8
+  triton_bmm_16919 0.0217 ms 94.3% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=64, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=4
+  triton_bmm_16921 0.0225 ms 91.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=128, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=4
+  triton_bmm_16924 0.0225 ms 90.9% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=128, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=4
+  triton_bmm_16910 0.0246 ms 83.3% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=32, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=5, num_warps=8
+  triton_bmm_16914 0.0246 ms 83.3% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=64, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=2, num_warps=4
+  triton_bmm_16923 0.0246 ms 83.3% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=128, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=2, num_warps=8
+SingleProcess AUTOTUNE benchmarking takes 2.3573 seconds and 0.2895 seconds precompiling for 22 choices
+Autotune Choices Stats:
+{"num_choices": 22, "num_triton_choices": 21, "best_kernel": "triton_bmm_16684", "best_kernel_desc": "ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=64, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=8", "best_time": 0.02252800017595291, "best_triton_pos": 0}
+AUTOTUNE bmm(7x256x1408, 7x1408x256)
+strides: [360448, 1408, 1], [360448, 1, 1408]
+dtypes: torch.bfloat16, torch.bfloat16
+  triton_bmm_16684 0.0225 ms 100.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=64, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=8
+  triton_bmm_16688 0.0245 ms 91.8% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=64, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=4
+  triton_bmm_16685 0.0266 ms 84.6% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=128, BLOCK_M=64, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=5, num_warps=4
+  triton_bmm_16687 0.0266 ms 84.6% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=64, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=8
+  triton_bmm_16691 0.0266 ms 84.6% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=128, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=8
+  triton_bmm_16680 0.0299 ms 75.5% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=64, BLOCK_N=32, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=5, num_warps=8
+  triton_bmm_16679 0.0307 ms 73.4% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=32, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=5, num_warps=8
+  triton_bmm_16681 0.0307 ms 73.4% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=128, BLOCK_M=64, BLOCK_N=32, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=5, num_warps=4
+  triton_bmm_16678 0.0307 ms 73.3% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=128, BLOCK_M=32, BLOCK_N=32, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=2, num_warps=4
+  triton_bmm_16686 0.0307 ms 73.3% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=64, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=4
+SingleProcess AUTOTUNE benchmarking takes 2.1886 seconds and 0.0001 seconds precompiling for 22 choices
+Autotune Choices Stats:
+{"num_choices": 22, "num_triton_choices": 21, "best_kernel": "triton_bmm_17230", "best_kernel_desc": "ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=64, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=8", "best_time": 0.013311999849975109, "best_triton_pos": 0}
+AUTOTUNE bmm(7x256x256, 7x256x704)
+strides: [65536, 256, 1], [180224, 704, 1]
+dtypes: torch.bfloat16, torch.bfloat16
+  triton_bmm_17230 0.0133 ms 100.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=64, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=8
+  triton_bmm_17225 0.0143 ms 92.9% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=32, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=5, num_warps=8
+  triton_bmm_17229 0.0143 ms 92.9% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=64, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=2, num_warps=4
+  triton_bmm_17232 0.0143 ms 92.9% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=64, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=4
+  triton_bmm_17233 0.0143 ms 92.9% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=64, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=8
+  triton_bmm_17234 0.0143 ms 92.9% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=64, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=4
+  triton_bmm_17236 0.0143 ms 92.9% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=128, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=4
+  triton_bmm_17237 0.0143 ms 92.9% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=128, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=8
+  triton_bmm_17226 0.0164 ms 81.2% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=64, BLOCK_N=32, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=5, num_warps=8
+  triton_bmm_17231 0.0164 ms 81.2% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=128, BLOCK_M=64, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=5, num_warps=4
+SingleProcess AUTOTUNE benchmarking takes 2.0437 seconds and 0.2968 seconds precompiling for 22 choices
+Autotune Choices Stats:
+{"num_choices": 22, "num_triton_choices": 21, "best_kernel": "triton_bmm_16999", "best_kernel_desc": "ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=64, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=8", "best_time": 0.01228800043463707, "best_triton_pos": 0}
+AUTOTUNE bmm(7x256x704, 7x704x256)
+strides: [180224, 704, 1], [180224, 1, 704]
+dtypes: torch.bfloat16, torch.bfloat16
+  triton_bmm_16999 0.0123 ms 100.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=64, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=8
+  triton_bmm_17002 0.0123 ms 100.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=64, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=8
+  triton_bmm_17003 0.0123 ms 100.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=64, BLOCK_M=64, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=4
+  triton_bmm_17001 0.0127 ms 96.7% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=64, BLOCK_N=128, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=4
+  triton_bmm_17006 0.0143 ms 85.7% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=128, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=4, num_warps=8
+  triton_bmm_17005 0.0157 ms 78.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=128, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=3, num_warps=4
+  triton_bmm_16994 0.0164 ms 75.1% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=32, BLOCK_N=64, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=5, num_warps=8
+  triton_bmm_16995 0.0164 ms 75.0% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=32, BLOCK_M=64, BLOCK_N=32, EVEN_K=True, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=5, num_warps=8
+  triton_bmm_17000 0.0175 ms 70.3% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=128, BLOCK_M=64, BLOCK_N=64, EVEN_K=False, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=5, num_warps=4
+  triton_bmm_16993 0.0184 ms 66.7% ACC_TYPE='tl.float32', ALLOW_TF32=False, BLOCK_K=128, BLOCK_M=32, BLOCK_N=32, EVEN_K=False, GROUP_M=8, USE_FAST_ACCUM=False, num_stages=2, num_warps=4
+SingleProcess AUTOTUNE benchmarking takes 2.1892 seconds and 0.0001 seconds precompiling for 22 choices
+step 100 | loss 2.5153 | bpb 1.2984 | bytes 162,304,434 | 6249.4ms/step
+step 200 | loss 2.3685 | bpb 1.2226 | bytes 152,829,402 | 77.8ms/step
+step 300 | loss 2.5501 | bpb 1.3164 | bytes 164,551,732 | 79.2ms/step
+step 400 | loss 2.5306 | bpb 1.3063 | bytes 163,292,823 | 79.4ms/step
+step 500 | loss 2.0595 | bpb 1.0631 | bytes 132,892,932 | 76.8ms/step
+step 600 | loss 1.8281 | bpb 0.9437 | bytes 117,960,191 | 76.6ms/step
+step 700 | loss 2.1967 | bpb 1.1340 | bytes 141,745,541 | 79.4ms/step
+step 800 | loss 2.4414 | bpb 1.2603 | bytes 157,533,903 | 79.4ms/step
+step 900 | loss 2.2535 | bpb 1.1633 | bytes 145,410,669 | 77.1ms/step
+step 1000 | loss 2.5173 | bpb 1.2995 | bytes 162,432,987 | 76.9ms/step
+step 1000 | eval_loss 2.0982 | ema_eval_loss 2.0391 | eval_bpb 1.0831 | ema_eval_bpb 1.0526
+step 1100 | loss 2.2975 | bpb 1.1860 | bytes 148,249,022 | 141.8ms/step
+step 1200 | loss 1.9484 | bpb 1.0058 | bytes 125,723,558 | 80.3ms/step
+step 1300 | loss 2.1946 | bpb 1.1329 | bytes 141,612,573 | 78.5ms/step
+step 1400 | loss 1.8931 | bpb 0.9772 | bytes 122,153,760 | 82.4ms/step
+step 1500 | loss 1.7599 | bpb 0.9085 | bytes 113,561,563 | 84.1ms/step
+step 1600 | loss 1.9745 | bpb 1.0193 | bytes 127,410,339 | 81.3ms/step
+step 1700 | loss 2.4476 | bpb 1.2635 | bytes 157,934,699 | 77.6ms/step
+step 1800 | loss 1.9745 | bpb 1.0193 | bytes 127,406,862 | 77.4ms/step
+step 1900 | loss 2.0950 | bpb 1.0815 | bytes 135,187,014 | 79.9ms/step
+step 2000 | loss 2.2841 | bpb 1.1791 | bytes 147,383,601 | 80.0ms/step
+step 2000 | eval_loss 1.9910 | ema_eval_loss 1.9300 | eval_bpb 1.0278 | ema_eval_bpb 0.9963
+step 2100 | loss 1.7789 | bpb 0.9183 | bytes 114,790,096 | 132.8ms/step
+step 2200 | loss 1.8540 | bpb 0.9571 | bytes 119,632,757 | 79.9ms/step
+step 2300 | loss 1.7631 | bpb 0.9101 | bytes 113,766,430 | 79.6ms/step
+step 2400 | loss 2.0578 | bpb 1.0623 | bytes 132,784,579 | 79.8ms/step
+step 2500 | loss 2.0166 | bpb 1.0410 | bytes 130,127,655 | 79.7ms/step
+step 2600 | loss 2.1185 | bpb 1.0936 | bytes 136,702,197 | 81.0ms/step
+step 2700 | loss 1.9796 | bpb 1.0219 | bytes 127,738,120 | 81.1ms/step
+step 2800 | loss 2.1714 | bpb 1.1209 | bytes 140,112,344 | 78.6ms/step
+step 2900 | loss 2.2145 | bpb 1.1432 | bytes 142,894,743 | 78.6ms/step
+step 3000 | loss 1.9698 | bpb 1.0168 | bytes 127,102,627 | 80.7ms/step
+step 3000 | eval_loss 1.9383 | ema_eval_loss 1.8770 | eval_bpb 1.0006 | ema_eval_bpb 0.9689
+step 3100 | loss 1.7952 | bpb 0.9267 | bytes 115,840,676 | 137.7ms/step
+step 3200 | loss 1.7367 | bpb 0.8965 | bytes 112,067,234 | 78.7ms/step
+step 3300 | loss 1.7240 | bpb 0.8900 | bytes 111,246,566 | 80.9ms/step
+step 3400 | loss 1.6026 | bpb 0.8273 | bytes 103,412,423 | 81.8ms/step
+step 3500 | loss 2.0523 | bpb 1.0594 | bytes 132,427,137 | 82.4ms/step
+step 3600 | loss 2.0266 | bpb 1.0462 | bytes 130,772,509 | 79.7ms/step
+step 3700 | loss 2.1108 | bpb 1.0896 | bytes 136,200,526 | 79.3ms/step
+step 3800 | loss 1.8158 | bpb 0.9373 | bytes 117,165,554 | 79.9ms/step
+step 3900 | loss 1.7367 | bpb 0.8965 | bytes 112,063,857 | 77.5ms/step
+step 4000 | loss 1.9040 | bpb 0.9829 | bytes 122,857,290 | 79.2ms/step
+step 4000 | eval_loss 1.9039 | ema_eval_loss 1.8447 | eval_bpb 0.9828 | ema_eval_bpb 0.9523
+step 4100 | loss 1.8198 | bpb 0.9394 | bytes 117,426,505 | 136.1ms/step
+step 4200 | loss 1.8595 | bpb 0.9599 | bytes 119,986,861 | 77.5ms/step
+step 4300 | loss 1.8615 | bpb 0.9609 | bytes 120,115,259 | 77.8ms/step
+step 4400 | loss 2.1136 | bpb 1.0911 | bytes 136,385,585 | 79.4ms/step
+step 4500 | loss 2.1231 | bpb 1.0960 | bytes 136,996,548 | 79.8ms/step
+step 4600 | loss 2.2045 | bpb 1.1380 | bytes 142,246,643 | 77.5ms/step
+step 4700 | loss 2.0827 | bpb 1.0751 | bytes 134,391,915 | 78.7ms/step
+step 4800 | loss 1.5853 | bpb 0.8184 | bytes 102,296,320 | 78.7ms/step
+step 4900 | loss 1.7847 | bpb 0.9213 | bytes 115,160,499 | 79.8ms/step
+step 5000 | loss 1.8015 | bpb 0.9299 | bytes 116,242,641 | 77.7ms/step
+step 5000 | eval_loss 1.8808 | ema_eval_loss 1.8201 | eval_bpb 0.9709 | ema_eval_bpb 0.9396
+step 5100 | loss 1.8472 | bpb 0.9536 | bytes 119,194,923 | 135.0ms/step
+step 5200 | loss 1.6979 | bpb 0.8765 | bytes 109,562,054 | 80.1ms/step
+step 5300 | loss 1.7086 | bpb 0.8820 | bytes 110,248,477 | 80.0ms/step
+step 5400 | loss 1.6681 | bpb 0.8611 | bytes 107,637,098 | 77.8ms/step
+step 5500 | loss 1.5847 | bpb 0.8180 | bytes 102,253,212 | 77.6ms/step
+step 5600 | loss 2.0485 | bpb 1.0574 | bytes 132,180,955 | 79.9ms/step
+step 5700 | loss 2.2889 | bpb 1.1816 | bytes 147,698,567 | 80.0ms/step
+step 5800 | loss 2.1151 | bpb 1.0918 | bytes 136,478,677 | 77.6ms/step
+step 5900 | loss 2.1651 | bpb 1.1176 | bytes 139,704,933 | 77.6ms/step
+step 6000 | loss 1.8860 | bpb 0.9736 | bytes 121,700,634 | 80.2ms/step
+step 6000 | eval_loss 1.8607 | ema_eval_loss 1.8022 | eval_bpb 0.9605 | ema_eval_bpb 0.9303
+step 6100 | loss 1.5993 | bpb 0.8256 | bytes 103,200,933 | 135.4ms/step
+step 6200 | loss 1.7284 | bpb 0.8922 | bytes 111,527,694 | 77.5ms/step
+step 6300 | loss 1.8951 | bpb 0.9783 | bytes 122,287,712 | 80.0ms/step
+step 6400 | loss 2.0460 | bpb 1.0562 | bytes 132,022,157 | 80.0ms/step
+step 6500 | loss 1.8821 | bpb 0.9716 | bytes 121,444,437 | 77.5ms/step
+step 6600 | loss 1.7013 | bpb 0.8782 | bytes 109,777,482 | 77.5ms/step
+step 6700 | loss 1.7383 | bpb 0.8974 | bytes 112,169,394 | 80.0ms/step
+step 6800 | loss 1.4988 | bpb 0.7737 | bytes 96,715,513 | 80.0ms/step
+step 6900 | loss 1.9505 | bpb 1.0069 | bytes 125,858,580 | 77.9ms/step
+step 7000 | loss 1.8179 | bpb 0.9384 | bytes 117,302,598 | 78.2ms/step
+step 7000 | eval_loss 1.8451 | ema_eval_loss 1.7872 | eval_bpb 0.9524 | ema_eval_bpb 0.9226
+step 7100 | loss 2.0074 | bpb 1.0363 | bytes 129,534,708 | 136.9ms/step
+step 7200 | loss 2.0791 | bpb 1.0732 | bytes 134,154,995 | 77.4ms/step
+step 7300 | loss 1.9876 | bpb 1.0260 | bytes 128,255,114 | 77.4ms/step
+step 7400 | loss 1.6677 | bpb 0.8609 | bytes 107,614,430 | 80.0ms/step
+step 7500 | loss 1.7765 | bpb 0.9171 | bytes 114,634,505 | 79.9ms/step
+step 7600 | loss 1.8444 | bpb 0.9521 | bytes 119,014,271 | 77.7ms/step
+step 7700 | loss 1.6389 | bpb 0.8460 | bytes 105,753,735 | 77.9ms/step
+step 7800 | loss 1.8402 | bpb 0.9500 | bytes 118,743,890 | 79.5ms/step
+step 7900 | loss 1.5735 | bpb 0.8123 | bytes 101,535,751 | 80.1ms/step
+step 8000 | loss 2.0311 | bpb 1.0485 | bytes 131,057,845 | 77.5ms/step
+step 8000 | eval_loss 1.8329 | ema_eval_loss 1.7753 | eval_bpb 0.9462 | ema_eval_bpb 0.9164
+step 8100 | loss 1.5748 | bpb 0.8130 | bytes 101,620,089 | 135.2ms/step
+step 8200 | loss 1.9479 | bpb 1.0055 | bytes 125,689,074 | 79.8ms/step
+step 8300 | loss 2.1072 | bpb 1.0878 | bytes 135,973,590 | 77.7ms/step
+step 8400 | loss 1.2319 | bpb 0.6359 | bytes 79,489,513 | 77.7ms/step
+step 8500 | loss 1.9513 | bpb 1.0073 | bytes 125,913,441 | 79.8ms/step
+step 8600 | loss 1.8155 | bpb 0.9372 | bytes 117,148,462 | 79.9ms/step
+step 8700 | loss 1.6511 | bpb 0.8523 | bytes 106,543,165 | 79.9ms/step
+step 8800 | loss 1.9743 | bpb 1.0192 | bytes 127,398,870 | 77.8ms/step
+step 8900 | loss 2.0403 | bpb 1.0533 | bytes 131,656,561 | 77.6ms/step
+step 9000 | loss 1.7125 | bpb 0.8840 | bytes 110,504,928 | 79.9ms/step
+step 9000 | eval_loss 1.8214 | ema_eval_loss 1.7652 | eval_bpb 0.9403 | ema_eval_bpb 0.9112
+step 9100 | loss 1.3217 | bpb 0.6823 | bytes 85,285,663 | 135.2ms/step
+step 9200 | loss 1.6528 | bpb 0.8532 | bytes 106,649,379 | 77.5ms/step
+step 9300 | loss 1.4837 | bpb 0.7659 | bytes 95,739,916 | 82.9ms/step
+step 9400 | loss 1.5931 | bpb 0.8224 | bytes 102,795,876 | 79.8ms/step
+step 9500 | loss 1.7861 | bpb 0.9220 | bytes 115,253,590 | 77.6ms/step
+step 9600 | loss 1.6700 | bpb 0.8621 | bytes 107,758,182 | 77.5ms/step
+step 9700 | loss 1.8913 | bpb 0.9763 | bytes 122,036,976 | 79.9ms/step
+step 9800 | loss 1.8346 | bpb 0.9470 | bytes 118,380,109 | 80.1ms/step
+step 9900 | loss 1.9956 | bpb 1.0302 | bytes 128,770,909 | 77.5ms/step
+step 10000 | loss 1.5836 | bpb 0.8175 | bytes 102,184,721 | 77.8ms/step
+step 10000 | eval_loss 1.8122 | ema_eval_loss 1.7561 | eval_bpb 0.9355 | ema_eval_bpb 0.9065
+step 10100 | loss 1.9658 | bpb 1.0148 | bytes 126,848,476 | 137.4ms/step
+step 10200 | loss 1.8980 | bpb 0.9798 | bytes 122,469,725 | 77.7ms/step
+step 10300 | loss 1.9021 | bpb 0.9819 | bytes 122,737,053 | 77.4ms/step
+step 10400 | loss 1.7125 | bpb 0.8840 | bytes 110,503,528 | 79.9ms/step
+step 10500 | loss 1.6452 | bpb 0.8493 | bytes 106,162,123 | 79.9ms/step
+step 10600 | loss 1.5408 | bpb 0.7954 | bytes 99,422,536 | 77.5ms/step
+step 10700 | loss 1.7118 | bpb 0.8837 | bytes 110,458,744 | 77.5ms/step
+step 10800 | loss 1.9058 | bpb 0.9838 | bytes 122,973,750 | 80.0ms/step
+step 10900 | loss 1.6830 | bpb 0.8688 | bytes 108,599,126 | 79.9ms/step
+step 11000 | loss 1.3857 | bpb 0.7153 | bytes 89,417,756 | 77.8ms/step
+step 11000 | eval_loss 1.8036 | ema_eval_loss 1.7482 | eval_bpb 0.9311 | ema_eval_bpb 0.9024
+step 11100 | loss 1.6570 | bpb 0.8554 | bytes 106,920,730 | 135.1ms/step
+step 11200 | loss 1.6755 | bpb 0.8649 | bytes 108,114,962 | 79.9ms/step
+step 11300 | loss 1.9058 | bpb 0.9838 | bytes 122,975,596 | 77.4ms/step
+step 11400 | loss 2.2341 | bpb 1.1533 | bytes 144,160,145 | 77.4ms/step
+step 11500 | loss 1.9362 | bpb 0.9995 | bytes 124,934,813 | 79.9ms/step
+step 11600 | loss 1.5393 | bpb 0.7946 | bytes 99,328,584 | 79.8ms/step
+step 11700 | loss 1.5210 | bpb 0.7852 | bytes 98,144,197 | 77.7ms/step
+step 11800 | loss 1.7174 | bpb 0.8866 | bytes 110,820,517 | 78.0ms/step
+step 11900 | loss 1.5432 | bpb 0.7966 | bytes 99,579,581 | 79.2ms/step
+step 12000 | loss 1.6215 | bpb 0.8370 | bytes 104,630,494 | 80.0ms/step
+step 12000 | eval_loss 1.7979 | ema_eval_loss 1.7414 | eval_bpb 0.9281 | ema_eval_bpb 0.8989
+step 12100 | loss 1.7844 | bpb 0.9211 | bytes 115,141,469 | 132.5ms/step
+step 12200 | loss 1.3177 | bpb 0.6802 | bytes 85,028,451 | 79.8ms/step
+step 12300 | loss 2.0197 | bpb 1.0426 | bytes 130,322,161 | 79.8ms/step
+step 12400 | loss 1.7183 | bpb 0.8870 | bytes 110,878,685 | 79.8ms/step
+step 12500 | loss 1.7972 | bpb 0.9277 | bytes 115,967,382 | 77.5ms/step
+step 12600 | loss 1.8544 | bpb 0.9573 | bytes 119,659,487 | 77.4ms/step
+step 12700 | loss 1.5130 | bpb 0.7811 | bytes 97,632,033 | 79.9ms/step
+step 12800 | loss 1.7144 | bpb 0.8850 | bytes 110,622,827 | 79.8ms/step
+step 12900 | loss 2.0594 | bpb 1.0631 | bytes 132,889,470 | 77.6ms/step
+step 13000 | loss 1.8477 | bpb 0.9538 | bytes 119,229,484 | 77.4ms/step
+step 13000 | eval_loss 1.7890 | ema_eval_loss 1.7358 | eval_bpb 0.9235 | ema_eval_bpb 0.8961
+step 13100 | loss 1.9381 | bpb 1.0005 | bytes 125,062,466 | 137.2ms/step
+step 13200 | loss 1.8796 | bpb 0.9703 | bytes 121,286,269 | 77.6ms/step
+step 13300 | loss 1.7714 | bpb 0.9144 | bytes 114,300,909 | 77.3ms/step
+step 13400 | loss 1.4918 | bpb 0.7701 | bytes 96,263,479 | 79.9ms/step
+step 13500 | loss 1.7231 | bpb 0.8895 | bytes 111,189,390 | 79.8ms/step
+step 13600 | loss 1.5874 | bpb 0.8194 | bytes 102,428,257 | 77.7ms/step
+step 13700 | loss 1.8462 | bpb 0.9530 | bytes 119,130,101 | 77.4ms/step
+step 13800 | loss 1.9847 | bpb 1.0245 | bytes 128,067,209 | 79.8ms/step
+step 13900 | loss 1.5154 | bpb 0.7823 | bytes 97,783,832 | 80.0ms/step
+step 14000 | loss 1.6969 | bpb 0.8760 | bytes 109,497,193 | 79.2ms/step
+step 14000 | eval_loss 1.7862 | ema_eval_loss 1.7302 | eval_bpb 0.9221 | ema_eval_bpb 0.8932
+step 14100 | loss 1.6831 | bpb 0.8689 | bytes 108,606,565 | 139.5ms/step
+step 14200 | loss 1.9549 | bpb 1.0091 | bytes 126,143,592 | 81.5ms/step
+step 14300 | loss 1.8713 | bpb 0.9660 | bytes 120,752,037 | 78.7ms/step
+step 14400 | loss 2.1026 | bpb 1.0854 | bytes 135,676,024 | 78.0ms/step
+step 14500 | loss 1.8824 | bpb 0.9717 | bytes 121,465,483 | 81.2ms/step
+step 14600 | loss 1.9322 | bpb 0.9975 | bytes 124,682,216 | 81.7ms/step
+step 14700 | loss 1.8879 | bpb 0.9745 | bytes 121,817,379 | 82.3ms/step
+step 14800 | loss 1.8223 | bpb 0.9407 | bytes 117,585,395 | 79.2ms/step
+step 14900 | loss 1.8949 | bpb 0.9782 | bytes 122,271,174 | 82.8ms/step
+step 15000 | loss 1.8279 | bpb 0.9436 | bytes 117,949,437 | 81.9ms/step
+step 15000 | eval_loss 1.7802 | ema_eval_loss 1.7258 | eval_bpb 0.9190 | ema_eval_bpb 0.8909
+step 15100 | loss 2.0609 | bpb 1.0639 | bytes 132,982,516 | 140.0ms/step
+step 15200 | loss 1.7616 | bpb 0.9094 | bytes 113,671,939 | 79.2ms/step
+step 15300 | loss 1.5728 | bpb 0.8119 | bytes 101,486,221 | 80.0ms/step
+step 15400 | loss 1.5738 | bpb 0.8124 | bytes 101,555,636 | 78.5ms/step
+step 15500 | loss 2.0302 | bpb 1.0480 | bytes 131,004,122 | 81.7ms/step
+step 15600 | loss 1.7272 | bpb 0.8916 | bytes 111,447,941 | 81.2ms/step
+step 15700 | loss 1.7862 | bpb 0.9220 | bytes 115,255,529 | 78.5ms/step
+step 15800 | loss 1.8998 | bpb 0.9807 | bytes 122,586,847 | 78.8ms/step
+step 15900 | loss 1.9932 | bpb 1.0289 | bytes 128,613,680 | 80.9ms/step
+step 16000 | loss 1.9564 | bpb 1.0099 | bytes 126,238,999 | 79.8ms/step
+step 16000 | eval_loss 1.7770 | ema_eval_loss 1.7212 | eval_bpb 0.9173 | ema_eval_bpb 0.8885
+step 16100 | loss 1.7058 | bpb 0.8805 | bytes 110,067,079 | 136.9ms/step
+step 16200 | loss 1.7728 | bpb 0.9151 | bytes 114,393,200 | 81.6ms/step
+step 16300 | loss 1.9075 | bpb 0.9847 | bytes 123,085,518 | 81.8ms/step
+step 16400 | loss 1.8542 | bpb 0.9572 | bytes 119,648,472 | 78.2ms/step
+step 16500 | loss 1.4158 | bpb 0.7309 | bytes 91,359,234 | 78.2ms/step
+step 16600 | loss 1.7526 | bpb 0.9047 | bytes 113,090,053 | 83.2ms/step
+step 16700 | loss 1.9334 | bpb 0.9981 | bytes 124,759,553 | 82.6ms/step
+step 16800 | loss 1.6941 | bpb 0.8745 | bytes 109,317,880 | 81.0ms/step
+step 16900 | loss 1.7695 | bpb 0.9134 | bytes 114,179,541 | 79.4ms/step
+step 17000 | loss 1.7400 | bpb 0.8982 | bytes 112,274,670 | 80.2ms/step
+step 17000 | eval_loss 1.7723 | ema_eval_loss 1.7170 | eval_bpb 0.9149 | ema_eval_bpb 0.8863
+step 17100 | loss 1.8164 | bpb 0.9376 | bytes 117,204,853 | 144.1ms/step
+step 17200 | loss 2.0220 | bpb 1.0438 | bytes 130,473,036 | 78.3ms/step
+step 17300 | loss 1.3690 | bpb 0.7067 | bytes 88,335,660 | 80.0ms/step
+step 17400 | loss 1.8759 | bpb 0.9684 | bytes 121,046,218 | 79.2ms/step
+step 17500 | loss 1.7122 | bpb 0.8839 | bytes 110,482,928 | 80.7ms/step
+step 17600 | loss 1.6560 | bpb 0.8548 | bytes 106,854,400 | 83.1ms/step
+step 17700 | loss 1.7036 | bpb 0.8794 | bytes 109,929,119 | 82.4ms/step
+step 17800 | loss 1.8706 | bpb 0.9656 | bytes 120,702,806 | 84.6ms/step
+step 17900 | loss 1.9329 | bpb 0.9978 | bytes 124,726,308 | 84.2ms/step
+step 18000 | loss 2.1813 | bpb 1.1260 | bytes 140,749,813 | 80.9ms/step
+step 18000 | eval_loss 1.7687 | ema_eval_loss 1.7134 | eval_bpb 0.9130 | ema_eval_bpb 0.8845
+step 18100 | loss 1.8607 | bpb 0.9605 | bytes 120,068,414 | 139.3ms/step
+step 18200 | loss 1.9165 | bpb 0.9893 | bytes 123,665,558 | 81.4ms/step
+step 18300 | loss 1.8389 | bpb 0.9493 | bytes 118,656,491 | 78.3ms/step
+step 18400 | loss 1.7994 | bpb 0.9289 | bytes 116,110,665 | 78.4ms/step
+step 18500 | loss 1.8938 | bpb 0.9776 | bytes 122,202,721 | 78.4ms/step
+step 18600 | loss 1.5055 | bpb 0.7772 | bytes 97,145,369 | 78.3ms/step
+step 18700 | loss 1.7751 | bpb 0.9164 | bytes 114,543,829 | 78.4ms/step
+step 18800 | loss 1.6886 | bpb 0.8717 | bytes 108,963,214 | 78.3ms/step
+step 18900 | loss 1.6136 | bpb 0.8330 | bytes 104,120,976 | 78.4ms/step
+step 19000 | loss 2.2501 | bpb 1.1615 | bytes 145,189,425 | 78.9ms/step
+step 19000 | eval_loss 1.7627 | ema_eval_loss 1.7101 | eval_bpb 0.9099 | ema_eval_bpb 0.8828
+step 19100 | loss 1.7320 | bpb 0.8941 | bytes 111,758,429 | 138.3ms/step
+step 19200 | loss 1.8530 | bpb 0.9566 | bytes 119,570,596 | 79.9ms/step
+step 19300 | loss 2.0352 | bpb 1.0506 | bytes 131,326,688 | 79.6ms/step
+step 19400 | loss 1.8384 | bpb 0.9490 | bytes 118,626,507 | 81.8ms/step
+step 19500 | loss 1.9404 | bpb 1.0016 | bytes 125,205,687 | 77.9ms/step
+step 19600 | loss 1.9471 | bpb 1.0051 | bytes 125,638,551 | 77.7ms/step
+step 19700 | loss 2.0492 | bpb 1.0578 | bytes 132,229,601 | 77.7ms/step
+step 19800 | loss 1.9618 | bpb 1.0127 | bytes 126,587,941 | 77.8ms/step
+step 19900 | loss 1.9077 | bpb 0.9848 | bytes 123,097,764 | 77.8ms/step
+step 20000 | loss 1.8058 | bpb 0.9322 | bytes 116,519,899 | 77.8ms/step
+step 20000 | eval_loss 1.7614 | ema_eval_loss 1.7069 | eval_bpb 0.9093 | ema_eval_bpb 0.8811
+step 20100 | loss 1.7188 | bpb 0.8873 | bytes 110,911,685 | 134.6ms/step
+step 20200 | loss 1.8196 | bpb 0.9393 | bytes 117,412,059 | 79.7ms/step
+step 20300 | loss 1.6883 | bpb 0.8715 | bytes 108,940,399 | 84.1ms/step
+step 20400 | loss 1.4433 | bpb 0.7450 | bytes 93,128,891 | 80.9ms/step
+step 20500 | loss 1.8277 | bpb 0.9435 | bytes 117,939,176 | 82.1ms/step
+step 20600 | loss 1.4412 | bpb 0.7440 | bytes 92,998,916 | 78.8ms/step
+step 20700 | loss 1.9315 | bpb 0.9971 | bytes 124,637,078 | 82.8ms/step
+step 20800 | loss 1.6993 | bpb 0.8772 | bytes 109,650,445 | 80.7ms/step
+step 20900 | loss 1.9819 | bpb 1.0231 | bytes 127,885,280 | 78.9ms/step
+step 21000 | loss 1.5374 | bpb 0.7937 | bytes 99,207,085 | 77.8ms/step
+step 21000 | eval_loss 1.7594 | ema_eval_loss 1.7041 | eval_bpb 0.9082 | ema_eval_bpb 0.8797
+step 21100 | loss 2.0397 | bpb 1.0529 | bytes 131,616,377 | 134.2ms/step
+step 21200 | loss 1.8964 | bpb 0.9790 | bytes 122,369,911 | 78.8ms/step
+step 21300 | loss 1.6643 | bpb 0.8592 | bytes 107,393,794 | 80.8ms/step
+step 21400 | loss 1.7841 | bpb 0.9210 | bytes 115,122,407 | 78.5ms/step
+step 21500 | loss 2.2115 | bpb 1.1416 | bytes 142,703,915 | 81.1ms/step
+step 21600 | loss 1.9927 | bpb 1.0287 | bytes 128,585,965 | 80.5ms/step
+step 21700 | loss 1.5611 | bpb 0.8059 | bytes 100,733,552 | 79.9ms/step
+step 21800 | loss 1.9933 | bpb 1.0290 | bytes 128,621,072 | 79.2ms/step
+step 21900 | loss 2.1820 | bpb 1.1264 | bytes 140,797,059 | 79.1ms/step
+step 22000 | loss 1.8839 | bpb 0.9725 | bytes 121,560,028 | 79.0ms/step
+step 22000 | eval_loss 1.7569 | ema_eval_loss 1.7016 | eval_bpb 0.9070 | ema_eval_bpb 0.8784
+step 22100 | loss 1.9351 | bpb 0.9989 | bytes 124,865,829 | 136.0ms/step
+step 22200 | loss 1.6525 | bpb 0.8530 | bytes 106,629,240 | 79.1ms/step
+step 22300 | loss 1.6031 | bpb 0.8275 | bytes 103,441,661 | 80.5ms/step
+step 22400 | loss 2.1407 | bpb 1.1051 | bytes 138,136,058 | 80.5ms/step
+step 22500 | loss 1.8479 | bpb 0.9539 | bytes 119,238,346 | 78.9ms/step
+step 22600 | loss 1.9453 | bpb 1.0042 | bytes 125,525,691 | 78.6ms/step
+step 22700 | loss 2.0270 | bpb 1.0464 | bytes 130,798,709 | 78.9ms/step
+step 22800 | loss 1.7519 | bpb 0.9044 | bytes 113,047,538 | 80.3ms/step
+step 22900 | loss 2.0590 | bpb 1.0629 | bytes 132,861,809 | 79.8ms/step
+step 23000 | loss 1.6461 | bpb 0.8498 | bytes 106,219,537 | 81.5ms/step
+step 23000 | eval_loss 1.7528 | ema_eval_loss 1.6998 | eval_bpb 0.9048 | ema_eval_bpb 0.8775
+step 23100 | loss 1.7393 | bpb 0.8979 | bytes 112,232,970 | 136.1ms/step
+step 23200 | loss 1.7039 | bpb 0.8796 | bytes 109,949,634 | 78.4ms/step
+step 23300 | loss 1.5923 | bpb 0.8220 | bytes 102,745,622 | 78.4ms/step
+step 23400 | loss 1.8956 | bpb 0.9786 | bytes 122,319,150 | 79.6ms/step
+step 23500 | loss 1.8095 | bpb 0.9341 | bytes 116,761,258 | 77.8ms/step
+step 23600 | loss 2.0607 | bpb 1.0638 | bytes 132,972,546 | 77.8ms/step
+step 23700 | loss 1.8542 | bpb 0.9572 | bytes 119,649,011 | 81.1ms/step
+step 23800 | loss 1.7057 | bpb 0.8805 | bytes 110,061,648 | 79.5ms/step
+step 23900 | loss 2.1367 | bpb 1.1030 | bytes 137,873,461 | 79.0ms/step
+step 24000 | loss 2.0340 | bpb 1.0500 | bytes 131,246,950 | 78.9ms/step
+step 24000 | eval_loss 1.7485 | ema_eval_loss 1.6965 | eval_bpb 0.9026 | ema_eval_bpb 0.8758
+step 24100 | loss 1.7904 | bpb 0.9243 | bytes 115,531,295 | 139.8ms/step
+step 24200 | loss 1.5752 | bpb 0.8132 | bytes 101,644,581 | 78.5ms/step
+step 24300 | loss 1.3332 | bpb 0.6882 | bytes 86,027,440 | 78.2ms/step
+step 24400 | loss 1.6573 | bpb 0.8555 | bytes 106,942,552 | 80.3ms/step
+step 24500 | loss 1.9967 | bpb 1.0307 | bytes 128,839,008 | 79.6ms/step
+step 24600 | loss 1.6755 | bpb 0.8649 | bytes 108,115,970 | 81.2ms/step
+step 24700 | loss 1.6872 | bpb 0.8710 | bytes 108,870,446 | 79.1ms/step
+step 24800 | loss 1.9998 | bpb 1.0323 | bytes 129,040,221 | 81.3ms/step
+step 24900 | loss 1.3395 | bpb 0.6915 | bytes 86,432,227 | 78.9ms/step
+step 25000 | loss 1.7360 | bpb 0.8962 | bytes 112,019,011 | 82.3ms/step
+step 25000 | eval_loss 1.7471 | ema_eval_loss 1.6940 | eval_bpb 0.9019 | ema_eval_bpb 0.8744
+step 25100 | loss 1.6428 | bpb 0.8480 | bytes 106,003,794 | 134.5ms/step
+step 25200 | loss 1.5312 | bpb 0.7904 | bytes 98,804,259 | 79.1ms/step
+step 25300 | loss 1.5619 | bpb 0.8063 | bytes 100,787,275 | 78.3ms/step
+step 25400 | loss 1.6940 | bpb 0.8745 | bytes 109,309,049 | 78.2ms/step
+step 25500 | loss 1.7846 | bpb 0.9212 | bytes 115,154,484 | 78.3ms/step
+step 25600 | loss 1.9774 | bpb 1.0208 | bytes 127,596,799 | 79.0ms/step
+step 25700 | loss 1.8481 | bpb 0.9540 | bytes 119,252,792 | 78.8ms/step
+step 25800 | loss 1.8461 | bpb 0.9530 | bytes 119,125,332 | 79.3ms/step
+step 25900 | loss 1.5286 | bpb 0.7891 | bytes 98,635,776 | 80.8ms/step
+step 26000 | loss 1.5784 | bpb 0.8148 | bytes 101,846,448 | 79.7ms/step
+step 26000 | eval_loss 1.7447 | ema_eval_loss 1.6916 | eval_bpb 0.9007 | ema_eval_bpb 0.8732
+step 26100 | loss 1.9007 | bpb 0.9812 | bytes 122,646,046 | 135.8ms/step
+step 26200 | loss 1.7568 | bpb 0.9069 | bytes 113,359,142 | 83.8ms/step
+step 26300 | loss 1.8062 | bpb 0.9324 | bytes 116,551,668 | 83.3ms/step
+step 26400 | loss 2.0296 | bpb 1.0477 | bytes 130,963,369 | 81.6ms/step
+step 26500 | loss 1.7849 | bpb 0.9214 | bytes 115,171,453 | 83.6ms/step
+step 26600 | loss 1.7942 | bpb 0.9262 | bytes 115,777,369 | 85.7ms/step
+step 26700 | loss 1.7272 | bpb 0.8916 | bytes 111,451,648 | 81.4ms/step
+step 26800 | loss 1.5716 | bpb 0.8113 | bytes 101,411,145 | 77.7ms/step
+step 26900 | loss 1.6864 | bpb 0.8706 | bytes 108,820,062 | 81.5ms/step
+step 27000 | loss 1.7173 | bpb 0.8865 | bytes 110,814,378 | 79.2ms/step
+step 27000 | eval_loss 1.7458 | ema_eval_loss 1.6901 | eval_bpb 0.9012 | ema_eval_bpb 0.8725
+step 27100 | loss 1.5005 | bpb 0.7746 | bytes 96,819,858 | 137.8ms/step
+step 27200 | loss 1.5220 | bpb 0.7857 | bytes 98,209,273 | 79.5ms/step
+step 27300 | loss 1.6307 | bpb 0.8418 | bytes 105,223,687 | 79.8ms/step
+step 27400 | loss 1.7585 | bpb 0.9078 | bytes 113,469,749 | 77.7ms/step
+step 27500 | loss 1.8621 | bpb 0.9613 | bytes 120,156,766 | 77.7ms/step
+step 27600 | loss 1.7813 | bpb 0.9196 | bytes 114,945,102 | 77.6ms/step
+step 27700 | loss 1.6020 | bpb 0.8270 | bytes 103,371,900 | 77.7ms/step
+step 27800 | loss 1.7942 | bpb 0.9262 | bytes 115,774,900 | 77.7ms/step
+step 27900 | loss 1.7524 | bpb 0.9046 | bytes 113,075,476 | 77.7ms/step
+step 28000 | loss 2.0427 | bpb 1.0545 | bytes 131,807,621 | 77.7ms/step
+step 28000 | eval_loss 1.7423 | ema_eval_loss 1.6884 | eval_bpb 0.8994 | ema_eval_bpb 0.8716
+step 28100 | loss 1.9106 | bpb 0.9863 | bytes 123,283,247 | 134.5ms/step
+step 28200 | loss 2.0181 | bpb 1.0418 | bytes 130,218,977 | 79.7ms/step
+step 28300 | loss 1.9865 | bpb 1.0255 | bytes 128,182,169 | 79.3ms/step
+step 28400 | loss 2.0240 | bpb 1.0448 | bytes 130,600,450 | 78.3ms/step
+step 28500 | loss 1.5174 | bpb 0.7833 | bytes 97,914,030 | 77.7ms/step
+step 28600 | loss 1.8063 | bpb 0.9324 | bytes 116,553,453 | 77.7ms/step
+step 28700 | loss 1.8556 | bpb 0.9579 | bytes 119,738,394 | 77.7ms/step
+step 28800 | loss 1.8638 | bpb 0.9621 | bytes 120,267,396 | 77.7ms/step
+step 28900 | loss 1.3583 | bpb 0.7012 | bytes 87,645,029 | 77.8ms/step
+step 29000 | loss 1.4211 | bpb 0.7336 | bytes 91,697,292 | 77.7ms/step
+step 29000 | eval_loss 1.7410 | ema_eval_loss 1.6859 | eval_bpb 0.8988 | ema_eval_bpb 0.8703
+step 29100 | loss 1.8746 | bpb 0.9677 | bytes 120,961,019 | 135.4ms/step
+step 29200 | loss 1.7830 | bpb 0.9204 | bytes 115,050,231 | 79.5ms/step
+step 29300 | loss 1.5665 | bpb 0.8087 | bytes 101,081,772 | 78.7ms/step
+step 29400 | loss 1.7579 | bpb 0.9075 | bytes 113,432,195 | 81.6ms/step
+step 29500 | loss 1.5596 | bpb 0.8051 | bytes 100,635,538 | 83.0ms/step
+step 29600 | loss 1.8283 | bpb 0.9438 | bytes 117,975,160 | 79.4ms/step
+step 29700 | loss 1.5960 | bpb 0.8239 | bytes 102,983,635 | 79.2ms/step
+step 29800 | loss 1.7101 | bpb 0.8828 | bytes 110,345,537 | 80.0ms/step
+step 29900 | loss 1.6186 | bpb 0.8355 | bytes 104,442,434 | 81.7ms/step
+step 30000 | loss 1.8280 | bpb 0.9436 | bytes 117,954,445 | 80.0ms/step
+step 30000 | eval_loss 1.7374 | ema_eval_loss 1.6848 | eval_bpb 0.8969 | ema_eval_bpb 0.8697
+step 30100 | loss 1.4749 | bpb 0.7613 | bytes 95,167,830 | 141.9ms/step
+step 30200 | loss 1.7137 | bpb 0.8847 | bytes 110,582,581 | 78.6ms/step
+step 30300 | loss 1.6429 | bpb 0.8481 | bytes 106,009,117 | 78.5ms/step
+step 30400 | loss 1.4099 | bpb 0.7278 | bytes 90,979,646 | 78.5ms/step
+step 30500 | loss 1.6685 | bpb 0.8613 | bytes 107,665,306 | 78.6ms/step
+step 30600 | loss 1.5576 | bpb 0.8041 | bytes 100,510,432 | 78.6ms/step
+step 30700 | loss 1.8357 | bpb 0.9476 | bytes 118,450,785 | 78.6ms/step
+step 30800 | loss 1.6473 | bpb 0.8503 | bytes 106,292,590 | 79.2ms/step
+step 30900 | loss 1.8370 | bpb 0.9483 | bytes 118,534,000 | 80.6ms/step
+step 31000 | loss 1.9171 | bpb 0.9896 | bytes 123,705,481 | 80.4ms/step
+step 31000 | eval_loss 1.7383 | ema_eval_loss 1.6825 | eval_bpb 0.8973 | ema_eval_bpb 0.8685
+step 31100 | loss 1.8647 | bpb 0.9626 | bytes 120,322,818 | 134.3ms/step
+step 31200 | loss 1.7452 | bpb 0.9009 | bytes 112,613,489 | 78.3ms/step
+step 31300 | loss 1.8975 | bpb 0.9795 | bytes 122,442,879 | 78.8ms/step
+step 31400 | loss 1.9699 | bpb 1.0169 | bytes 127,113,289 | 81.7ms/step
+step 31500 | loss 1.8161 | bpb 0.9375 | bytes 117,186,476 | 80.6ms/step
+step 31600 | loss 1.6402 | bpb 0.8467 | bytes 105,836,695 | 80.4ms/step
+step 31700 | loss 1.8179 | bpb 0.9384 | bytes 117,300,998 | 80.1ms/step
+step 31800 | loss 1.6597 | bpb 0.8567 | bytes 107,092,966 | 77.6ms/step
+step 31900 | loss 1.6707 | bpb 0.8624 | bytes 107,802,497 | 77.7ms/step
+step 32000 | loss 2.0210 | bpb 1.0433 | bytes 130,407,729 | 78.8ms/step
+step 32000 | eval_loss 1.7329 | ema_eval_loss 1.6805 | eval_bpb 0.8945 | ema_eval_bpb 0.8675
+step 32100 | loss 1.9965 | bpb 1.0306 | bytes 128,829,170 | 136.4ms/step
+step 32200 | loss 2.1623 | bpb 1.1162 | bytes 139,527,119 | 79.4ms/step
+step 32300 | loss 1.6407 | bpb 0.8469 | bytes 105,868,211 | 78.3ms/step
+step 32400 | loss 1.4891 | bpb 0.7687 | bytes 96,088,035 | 78.2ms/step
+step 32500 | loss 1.9080 | bpb 0.9849 | bytes 123,117,826 | 79.4ms/step
+step 32600 | loss 1.7135 | bpb 0.8845 | bytes 110,564,181 | 80.7ms/step
+step 32700 | loss 1.6575 | bpb 0.8556 | bytes 106,952,883 | 78.7ms/step
+step 32800 | loss 1.5654 | bpb 0.8081 | bytes 101,012,219 | 78.7ms/step
+step 32900 | loss 2.0343 | bpb 1.0501 | bytes 131,266,427 | 78.6ms/step
+step 33000 | loss 1.6222 | bpb 0.8374 | bytes 104,678,432 | 78.6ms/step
+step 33000 | eval_loss 1.7336 | ema_eval_loss 1.6785 | eval_bpb 0.8949 | ema_eval_bpb 0.8665
+step 33100 | loss 1.7426 | bpb 0.8996 | bytes 112,445,622 | 137.5ms/step
+step 33200 | loss 1.8727 | bpb 0.9667 | bytes 120,838,559 | 78.5ms/step
+step 33300 | loss 1.7829 | bpb 0.9204 | bytes 115,047,331 | 78.2ms/step
+step 33400 | loss 2.0520 | bpb 1.0593 | bytes 132,411,614 | 78.1ms/step
+step 33500 | loss 1.6018 | bpb 0.8269 | bytes 103,362,031 | 80.7ms/step
+step 33600 | loss 1.7292 | bpb 0.8927 | bytes 111,581,893 | 81.0ms/step
+step 33700 | loss 1.8629 | bpb 0.9617 | bytes 120,206,627 | 79.0ms/step
+step 33800 | loss 1.6958 | bpb 0.8754 | bytes 109,423,102 | 78.1ms/step
+step 33900 | loss 1.8766 | bpb 0.9687 | bytes 121,092,464 | 78.1ms/step
+step 34000 | loss 1.7907 | bpb 0.9244 | bytes 115,549,726 | 78.1ms/step
+step 34000 | eval_loss 1.7298 | ema_eval_loss 1.6772 | eval_bpb 0.8929 | ema_eval_bpb 0.8658
+step 34100 | loss 1.9658 | bpb 1.0148 | bytes 126,846,015 | 133.9ms/step
+step 34200 | loss 1.6258 | bpb 0.8393 | bytes 104,910,583 | 78.1ms/step
+step 34300 | loss 1.9096 | bpb 0.9858 | bytes 123,220,471 | 78.2ms/step
+step 34400 | loss 1.6017 | bpb 0.8268 | bytes 103,355,377 | 78.1ms/step
+step 34500 | loss 1.6276 | bpb 0.8402 | bytes 105,024,889 | 78.2ms/step
+step 34600 | loss 1.8706 | bpb 0.9657 | bytes 120,707,368 | 78.1ms/step
+step 34700 | loss 1.3238 | bpb 0.6834 | bytes 85,423,200 | 78.2ms/step
+step 34800 | loss 1.6664 | bpb 0.8602 | bytes 107,527,507 | 78.3ms/step
+step 34900 | loss 1.9722 | bpb 1.0181 | bytes 127,257,472 | 78.4ms/step
+step 35000 | loss 1.8399 | bpb 0.9498 | bytes 118,723,621 | 78.3ms/step
+step 35000 | eval_loss 1.7303 | ema_eval_loss 1.6761 | eval_bpb 0.8932 | ema_eval_bpb 0.8652
+step 35100 | loss 1.7518 | bpb 0.9043 | bytes 113,035,769 | 134.0ms/step
+step 35200 | loss 1.5331 | bpb 0.7914 | bytes 98,928,726 | 78.1ms/step
+step 35300 | loss 1.7279 | bpb 0.8920 | bytes 111,494,740 | 78.1ms/step
+step 35400 | loss 1.9968 | bpb 1.0308 | bytes 128,845,300 | 78.1ms/step
+step 35500 | loss 1.7253 | bpb 0.8907 | bytes 111,331,588 | 78.1ms/step
+step 35600 | loss 1.8744 | bpb 0.9676 | bytes 120,949,334 | 78.1ms/step
+step 35700 | loss 1.5127 | bpb 0.7809 | bytes 97,611,341 | 78.1ms/step
+step 35800 | loss 1.9683 | bpb 1.0160 | bytes 127,005,536 | 78.1ms/step
+step 35900 | loss 1.9974 | bpb 1.0311 | bytes 128,888,254 | 78.1ms/step
+step 36000 | loss 1.6982 | bpb 0.8767 | bytes 109,582,792 | 78.0ms/step
+step 36000 | eval_loss 1.7303 | ema_eval_loss 1.6756 | eval_bpb 0.8932 | ema_eval_bpb 0.8650
+step 36100 | loss 1.8910 | bpb 0.9762 | bytes 122,023,469 | 133.9ms/step
+step 36200 | loss 1.6586 | bpb 0.8562 | bytes 107,027,359 | 77.9ms/step
+step 36300 | loss 1.6669 | bpb 0.8605 | bytes 107,557,184 | 78.0ms/step
+step 36400 | loss 1.5618 | bpb 0.8062 | bytes 100,777,075 | 78.1ms/step
+step 36500 | loss 1.5259 | bpb 0.7877 | bytes 98,461,655 | 78.1ms/step
+step 36600 | loss 1.5337 | bpb 0.7917 | bytes 98,963,249 | 78.0ms/step
+step 36700 | loss 1.9965 | bpb 1.0306 | bytes 128,826,593 | 78.1ms/step
+step 36800 | loss 1.4381 | bpb 0.7424 | bytes 92,795,672 | 78.1ms/step
+step 36900 | loss 1.7361 | bpb 0.8962 | bytes 112,025,673 | 78.0ms/step
+step 37000 | loss 1.7128 | bpb 0.8842 | bytes 110,519,151 | 78.0ms/step
+step 37000 | eval_loss 1.7293 | ema_eval_loss 1.6748 | eval_bpb 0.8927 | ema_eval_bpb 0.8646
+step 37100 | loss 1.6440 | bpb 0.8487 | bytes 106,082,139 | 134.1ms/step
+step 37200 | loss 1.9862 | bpb 1.0253 | bytes 128,165,939 | 78.1ms/step
+step 37300 | loss 1.6985 | bpb 0.8768 | bytes 109,597,569 | 78.0ms/step
+step 37400 | loss 1.8423 | bpb 0.9510 | bytes 118,879,458 | 78.1ms/step
+step 37500 | loss 1.6444 | bpb 0.8489 | bytes 106,107,716 | 78.1ms/step
+step 37600 | loss 1.7189 | bpb 0.8873 | bytes 110,913,408 | 78.1ms/step
+step 37700 | loss 1.7479 | bpb 0.9023 | bytes 112,784,049 | 78.1ms/step
+step 37800 | loss 1.6218 | bpb 0.8372 | bytes 104,651,201 | 78.1ms/step
+step 37900 | loss 1.8287 | bpb 0.9440 | bytes 117,997,529 | 78.1ms/step
+step 38000 | loss 1.7501 | bpb 0.9034 | bytes 112,929,116 | 78.0ms/step
+step 38000 | eval_loss 1.7277 | ema_eval_loss 1.6737 | eval_bpb 0.8919 | ema_eval_bpb 0.8640
+step 38100 | loss 1.7811 | bpb 0.9194 | bytes 114,929,340 | 133.8ms/step
+step 38200 | loss 1.6667 | bpb 0.8604 | bytes 107,548,876 | 78.1ms/step
+step 38300 | loss 1.8697 | bpb 0.9652 | bytes 120,647,269 | 78.0ms/step
+step 38400 | loss 1.9996 | bpb 1.0322 | bytes 129,029,467 | 78.1ms/step
+step 38500 | loss 2.3582 | bpb 1.2173 | bytes 152,166,594 | 78.1ms/step
+step 38600 | loss 1.4988 | bpb 0.7737 | bytes 96,711,836 | 78.0ms/step
+step 38700 | loss 1.7367 | bpb 0.8965 | bytes 112,063,980 | 78.0ms/step
+step 38800 | loss 1.8657 | bpb 0.9631 | bytes 120,386,833 | 78.1ms/step
+step 38900 | loss 1.3075 | bpb 0.6750 | bytes 84,371,058 | 78.1ms/step
+step 39000 | loss 1.6798 | bpb 0.8671 | bytes 108,390,298 | 78.8ms/step
+step 39000 | eval_loss 1.7263 | ema_eval_loss 1.6726 | eval_bpb 0.8912 | ema_eval_bpb 0.8634
+step 39100 | loss 1.9125 | bpb 0.9873 | bytes 123,410,515 | 136.3ms/step
+step 39200 | loss 1.8375 | bpb 0.9486 | bytes 118,571,000 | 81.4ms/step
+step 39300 | loss 1.6950 | bpb 0.8750 | bytes 109,374,425 | 80.0ms/step
+step 39400 | loss 1.7757 | bpb 0.9166 | bytes 114,578,752 | 80.8ms/step
+step 39500 | loss 1.6561 | bpb 0.8549 | bytes 106,863,023 | 81.1ms/step
+step 39600 | loss 1.4951 | bpb 0.7718 | bytes 96,476,962 | 84.3ms/step
+step 39700 | loss 1.7676 | bpb 0.9125 | bytes 114,059,396 | 78.7ms/step
+step 39800 | loss 1.7497 | bpb 0.9032 | bytes 112,903,578 | 81.3ms/step
+step 39900 | loss 1.7283 | bpb 0.8922 | bytes 111,519,601 | 84.0ms/step
+step 40000 | loss 2.2473 | bpb 1.1601 | bytes 145,013,474 | 83.1ms/step
+step 40000 | eval_loss 1.7264 | ema_eval_loss 1.6721 | eval_bpb 0.8912 | ema_eval_bpb 0.8632
+step 40100 | loss 1.9705 | bpb 1.0172 | bytes 127,148,873 | 136.5ms/step
+step 40200 | loss 1.7478 | bpb 0.9023 | bytes 112,782,272 | 83.9ms/step
+step 40300 | loss 2.0013 | bpb 1.0331 | bytes 129,137,435 | 78.8ms/step
+step 40400 | loss 1.7875 | bpb 0.9228 | bytes 115,344,959 | 78.2ms/step
+step 40500 | loss 1.2785 | bpb 0.6600 | bytes 82,499,571 | 78.3ms/step
+step 40600 | loss 1.7886 | bpb 0.9233 | bytes 115,415,835 | 78.2ms/step
+step 40700 | loss 1.8434 | bpb 0.9516 | bytes 118,949,334 | 78.2ms/step
+step 40800 | loss 1.4446 | bpb 0.7457 | bytes 93,213,921 | 78.3ms/step
+step 40900 | loss 1.7594 | bpb 0.9082 | bytes 113,528,948 | 78.3ms/step
+step 41000 | loss 1.9973 | bpb 1.0310 | bytes 128,878,315 | 78.3ms/step
+step 41000 | eval_loss 1.7252 | ema_eval_loss 1.6720 | eval_bpb 0.8906 | ema_eval_bpb 0.8631
+step 41100 | loss 2.1081 | bpb 1.0882 | bytes 136,028,220 | 134.3ms/step
+step 41200 | loss 1.8208 | bpb 0.9400 | bytes 117,493,781 | 78.3ms/step
+step 41300 | loss 1.6494 | bpb 0.8514 | bytes 106,430,550 | 78.3ms/step
+step 41400 | loss 1.7258 | bpb 0.8909 | bytes 111,359,211 | 78.3ms/step
+step 41500 | loss 2.1594 | bpb 1.1147 | bytes 139,337,322 | 78.3ms/step
+step 41600 | loss 1.9025 | bpb 0.9821 | bytes 122,760,876 | 78.4ms/step
+step 41700 | loss 1.7341 | bpb 0.8952 | bytes 111,895,951 | 78.3ms/step
+step 41800 | loss 1.4910 | bpb 0.7697 | bytes 96,206,911 | 80.5ms/step
+step 41900 | loss 2.0328 | bpb 1.0494 | bytes 131,173,767 | 78.4ms/step
+step 42000 | loss 1.9181 | bpb 0.9902 | bytes 123,771,088 | 78.4ms/step
+step 42000 | eval_loss 1.7238 | ema_eval_loss 1.6714 | eval_bpb 0.8898 | ema_eval_bpb 0.8628
+step 42100 | loss 1.6878 | bpb 0.8713 | bytes 108,907,092 | 134.4ms/step
+step 42200 | loss 1.6915 | bpb 0.8732 | bytes 109,150,566 | 78.3ms/step
+step 42300 | loss 1.8085 | bpb 0.9336 | bytes 116,697,390 | 78.3ms/step
+step 42400 | loss 1.7238 | bpb 0.8898 | bytes 111,230,420 | 78.3ms/step
+step 42500 | loss 1.4650 | bpb 0.7563 | bytes 94,531,814 | 78.3ms/step
+step 42600 | loss 1.6847 | bpb 0.8697 | bytes 108,706,810 | 78.3ms/step
+step 42700 | loss 1.8333 | bpb 0.9464 | bytes 118,296,464 | 78.3ms/step
+step 42800 | loss 1.4136 | bpb 0.7297 | bytes 91,217,374 | 79.8ms/step
+step 42900 | loss 1.6429 | bpb 0.8481 | bytes 106,012,863 | 78.4ms/step
+step 43000 | loss 1.4523 | bpb 0.7497 | bytes 93,710,908 | 78.4ms/step
+step 43000 | eval_loss 1.7236 | ema_eval_loss 1.6702 | eval_bpb 0.8898 | ema_eval_bpb 0.8622
+step 43100 | loss 1.7238 | bpb 0.8898 | bytes 111,228,681 | 137.4ms/step
+step 43200 | loss 1.6813 | bpb 0.8679 | bytes 108,486,481 | 80.8ms/step
+step 43300 | loss 1.5579 | bpb 0.8042 | bytes 100,527,132 | 83.8ms/step
+step 43400 | loss 1.6961 | bpb 0.8756 | bytes 109,445,071 | 82.9ms/step
+step 43500 | loss 1.5150 | bpb 0.7820 | bytes 97,755,463 | 80.0ms/step
+step 43600 | loss 1.7920 | bpb 0.9251 | bytes 115,634,602 | 84.8ms/step
+step 43700 | loss 1.4671 | bpb 0.7573 | bytes 94,667,674 | 82.2ms/step
+step 43800 | loss 1.7215 | bpb 0.8886 | bytes 111,080,729 | 79.7ms/step
+step 43900 | loss 1.4064 | bpb 0.7260 | bytes 90,749,141 | 78.6ms/step
+step 44000 | loss 1.4803 | bpb 0.7641 | bytes 95,518,649 | 78.7ms/step
+step 44000 | eval_loss 1.7238 | ema_eval_loss 1.6698 | eval_bpb 0.8899 | ema_eval_bpb 0.8620
+step 44100 | loss 1.9630 | bpb 1.0133 | bytes 126,666,063 | 136.4ms/step
+step 44200 | loss 1.4603 | bpb 0.7538 | bytes 94,227,810 | 80.2ms/step
+step 44300 | loss 1.4773 | bpb 0.7626 | bytes 95,323,736 | 79.6ms/step
+step 44400 | loss 1.8825 | bpb 0.9718 | bytes 121,469,821 | 79.2ms/step
+step 44500 | loss 1.6226 | bpb 0.8376 | bytes 104,704,247 | 80.0ms/step
+step 44600 | loss 1.4782 | bpb 0.7631 | bytes 95,382,966 | 77.7ms/step
+step 44700 | loss 1.6776 | bpb 0.8660 | bytes 108,251,022 | 77.7ms/step
+step 44800 | loss 1.7231 | bpb 0.8895 | bytes 111,183,882 | 78.2ms/step
+step 44900 | loss 2.1688 | bpb 1.1195 | bytes 139,943,530 | 79.9ms/step
+step 45000 | loss 1.7663 | bpb 0.9118 | bytes 113,976,451 | 78.9ms/step
+step 45000 | eval_loss 1.7208 | ema_eval_loss 1.6677 | eval_bpb 0.8883 | ema_eval_bpb 0.8609
+step 45100 | loss 1.5618 | bpb 0.8062 | bytes 100,780,329 | 135.5ms/step
+step 45200 | loss 1.7107 | bpb 0.8831 | bytes 110,385,145 | 81.3ms/step
+step 45300 | loss 1.5861 | bpb 0.8188 | bytes 102,344,150 | 80.3ms/step
+step 45400 | loss 2.0146 | bpb 1.0400 | bytes 129,994,641 | 78.1ms/step
+step 45500 | loss 1.6405 | bpb 0.8468 | bytes 105,855,811 | 78.1ms/step
+step 45600 | loss 1.3761 | bpb 0.7104 | bytes 88,798,409 | 77.7ms/step
+step 45700 | loss 1.9449 | bpb 1.0040 | bytes 125,499,291 | 77.7ms/step
+step 45800 | loss 1.6678 | bpb 0.8609 | bytes 107,618,283 | 77.6ms/step
+step 45900 | loss 1.5595 | bpb 0.8050 | bytes 100,630,338 | 77.7ms/step
+step 46000 | loss 1.5095 | bpb 0.7792 | bytes 97,401,974 | 77.6ms/step
+step 46000 | eval_loss 1.7213 | ema_eval_loss 1.6664 | eval_bpb 0.8886 | ema_eval_bpb 0.8602
+step 46100 | loss 1.5282 | bpb 0.7889 | bytes 98,610,684 | 133.0ms/step
+step 46200 | loss 1.7921 | bpb 0.9251 | bytes 115,636,801 | 77.8ms/step
+step 46300 | loss 1.7271 | bpb 0.8916 | bytes 111,446,556 | 80.8ms/step
+step 46400 | loss 1.8854 | bpb 0.9733 | bytes 121,658,888 | 78.7ms/step
+step 46500 | loss 1.4853 | bpb 0.7667 | bytes 95,840,407 | 78.3ms/step
+step 46600 | loss 1.6479 | bpb 0.8507 | bytes 106,335,821 | 78.1ms/step
+step 46700 | loss 1.6876 | bpb 0.8712 | bytes 108,893,792 | 78.2ms/step
+step 46800 | loss 1.7077 | bpb 0.8815 | bytes 110,193,055 | 78.2ms/step
+step 46900 | loss 1.7667 | bpb 0.9120 | bytes 113,999,158 | 78.2ms/step
+step 47000 | loss 1.6055 | bpb 0.8288 | bytes 103,599,744 | 79.0ms/step
+step 47000 | eval_loss 1.7193 | ema_eval_loss 1.6658 | eval_bpb 0.8875 | ema_eval_bpb 0.8599
+step 47100 | loss 1.9065 | bpb 0.9841 | bytes 123,018,688 | 135.3ms/step
+step 47200 | loss 1.8055 | bpb 0.9320 | bytes 116,500,384 | 78.7ms/step
+step 47300 | loss 1.3742 | bpb 0.7094 | bytes 88,671,526 | 79.3ms/step
+step 47400 | loss 1.9935 | bpb 1.0291 | bytes 128,636,033 | 78.2ms/step
+step 47500 | loss 1.7849 | bpb 0.9214 | bytes 115,171,176 | 78.3ms/step
+step 47600 | loss 1.3834 | bpb 0.7141 | bytes 89,268,280 | 78.3ms/step
+step 47700 | loss 1.7677 | bpb 0.9125 | bytes 114,061,496 | 78.9ms/step
+step 47800 | loss 1.7436 | bpb 0.9001 | bytes 112,508,790 | 78.9ms/step
+step 47900 | loss 1.6974 | bpb 0.8762 | bytes 109,531,162 | 81.1ms/step
+step 48000 | loss 1.8818 | bpb 0.9714 | bytes 121,425,675 | 81.7ms/step
+step 48000 | eval_loss 1.7176 | ema_eval_loss 1.6653 | eval_bpb 0.8866 | ema_eval_bpb 0.8596
+step 48100 | loss 1.6464 | bpb 0.8499 | bytes 106,235,753 | 138.4ms/step
+step 48200 | loss 1.6189 | bpb 0.8357 | bytes 104,465,488 | 78.7ms/step
+step 48300 | loss 1.7727 | bpb 0.9151 | bytes 114,385,046 | 78.5ms/step
+step 48400 | loss 1.5279 | bpb 0.7887 | bytes 98,592,899 | 78.2ms/step
+step 48500 | loss 1.7247 | bpb 0.8903 | bytes 111,286,573 | 78.3ms/step
+step 48600 | loss 1.6458 | bpb 0.8496 | bytes 106,196,415 | 78.3ms/step
+step 48700 | loss 1.7157 | bpb 0.8857 | bytes 110,710,441 | 78.3ms/step
+step 48800 | loss 1.5869 | bpb 0.8192 | bytes 102,400,995 | 78.3ms/step
+step 48900 | loss 1.5073 | bpb 0.7781 | bytes 97,264,260 | 78.3ms/step
+step 49000 | loss 1.8382 | bpb 0.9489 | bytes 118,612,445 | 78.2ms/step
+step 49000 | eval_loss 1.7170 | ema_eval_loss 1.6642 | eval_bpb 0.8864 | ema_eval_bpb 0.8591
+step 49100 | loss 1.7303 | bpb 0.8932 | bytes 111,648,677 | 134.1ms/step
+step 49200 | loss 1.7245 | bpb 0.8902 | bytes 111,275,989 | 78.3ms/step
+step 49300 | loss 1.8397 | bpb 0.9497 | bytes 118,707,352 | 78.3ms/step
+step 49400 | loss 1.6409 | bpb 0.8471 | bytes 105,883,003 | 78.2ms/step
+step 49500 | loss 1.8096 | bpb 0.9342 | bytes 116,769,035 | 78.3ms/step
+step 49600 | loss 1.8791 | bpb 0.9700 | bytes 121,251,485 | 78.3ms/step
+step 49700 | loss 1.6338 | bpb 0.8434 | bytes 105,426,408 | 78.4ms/step
+step 49800 | loss 1.5836 | bpb 0.8175 | bytes 102,184,044 | 78.5ms/step
+step 49900 | loss 1.8111 | bpb 0.9349 | bytes 116,867,511 | 78.6ms/step
+step 50000 | loss 1.8139 | bpb 0.9364 | bytes 117,045,693 | 78.3ms/step
+step 50000 | eval_loss 1.7164 | ema_eval_loss 1.6634 | eval_bpb 0.8860 | ema_eval_bpb 0.8587
+step 50100 | loss 1.6181 | bpb 0.8353 | bytes 104,413,465 | 134.1ms/step
+step 50200 | loss 1.5592 | bpb 0.8049 | bytes 100,610,769 | 78.3ms/step
+step 50300 | loss 1.4920 | bpb 0.7702 | bytes 96,274,048 | 78.3ms/step
+step 50400 | loss 1.7355 | bpb 0.8959 | bytes 111,986,611 | 78.3ms/step
+step 50500 | loss 1.6982 | bpb 0.8766 | bytes 109,577,038 | 78.3ms/step
+step 50600 | loss 1.6223 | bpb 0.8375 | bytes 104,681,924 | 78.3ms/step
+step 50700 | loss 1.8017 | bpb 0.9301 | bytes 116,257,479 | 78.3ms/step
+step 50800 | loss 2.0134 | bpb 1.0394 | bytes 129,919,196 | 78.3ms/step
+step 50900 | loss 1.6376 | bpb 0.8453 | bytes 105,666,659 | 78.6ms/step
+step 51000 | loss 1.8169 | bpb 0.9379 | bytes 117,240,799 | 78.4ms/step
+step 51000 | eval_loss 1.7176 | ema_eval_loss 1.6626 | eval_bpb 0.8867 | ema_eval_bpb 0.8583
+step 51100 | loss 1.9825 | bpb 1.0234 | bytes 127,926,280 | 134.3ms/step
+step 51200 | loss 1.9198 | bpb 0.9911 | bytes 123,882,063 | 78.1ms/step
+step 51300 | loss 1.5681 | bpb 0.8095 | bytes 101,183,932 | 78.2ms/step
+step 51400 | loss 1.7266 | bpb 0.8913 | bytes 111,413,064 | 78.2ms/step
+step 51500 | loss 1.4130 | bpb 0.7294 | bytes 91,175,244 | 78.2ms/step
+step 51600 | loss 1.5020 | bpb 0.7754 | bytes 96,921,364 | 78.3ms/step
+step 51700 | loss 1.7982 | bpb 0.9283 | bytes 116,031,889 | 78.3ms/step
+step 51800 | loss 1.7266 | bpb 0.8913 | bytes 111,409,910 | 78.3ms/step
+step 51900 | loss 1.4794 | bpb 0.7637 | bytes 95,460,681 | 78.3ms/step
+step 52000 | loss 1.6824 | bpb 0.8685 | bytes 108,562,711 | 78.2ms/step
+step 52000 | eval_loss 1.7167 | ema_eval_loss 1.6629 | eval_bpb 0.8862 | ema_eval_bpb 0.8584
+step 52100 | loss 1.9596 | bpb 1.0116 | bytes 126,445,327 | 134.1ms/step
+step 52200 | loss 1.4542 | bpb 0.7507 | bytes 93,835,691 | 78.1ms/step
+step 52300 | loss 1.5240 | bpb 0.7867 | bytes 98,338,525 | 78.1ms/step
+step 52400 | loss 1.3965 | bpb 0.7209 | bytes 90,110,779 | 78.2ms/step
+step 52500 | loss 1.5361 | bpb 0.7929 | bytes 99,118,078 | 78.1ms/step
+step 52600 | loss 1.6036 | bpb 0.8278 | bytes 103,475,506 | 78.2ms/step
+step 52700 | loss 1.7408 | bpb 0.8987 | bytes 112,331,300 | 78.2ms/step
+step 52800 | loss 2.0128 | bpb 1.0390 | bytes 129,878,673 | 78.2ms/step
+step 52900 | loss 1.6184 | bpb 0.8354 | bytes 104,427,842 | 78.2ms/step
+step 53000 | loss 1.4312 | bpb 0.7388 | bytes 92,352,800 | 78.2ms/step
+step 53000 | eval_loss 1.7170 | ema_eval_loss 1.6629 | eval_bpb 0.8863 | ema_eval_bpb 0.8584
+step 53100 | loss 1.6092 | bpb 0.8307 | bytes 103,834,572 | 134.1ms/step
+step 53200 | loss 1.6616 | bpb 0.8577 | bytes 107,216,072 | 78.1ms/step
+step 53300 | loss 1.5656 | bpb 0.8082 | bytes 101,022,057 | 78.1ms/step
+step 53400 | loss 1.9856 | bpb 1.0250 | bytes 128,126,424 | 78.2ms/step
+step 53500 | loss 1.8160 | bpb 0.9375 | bytes 117,183,207 | 78.1ms/step
+step 53600 | loss 1.9633 | bpb 1.0135 | bytes 126,683,570 | 78.1ms/step
+step 53700 | loss 1.7889 | bpb 0.9235 | bytes 115,432,635 | 78.1ms/step
+step 53800 | loss 2.0081 | bpb 1.0366 | bytes 129,577,584 | 78.1ms/step
+step 53900 | loss 1.5675 | bpb 0.8091 | bytes 101,143,225 | 78.0ms/step
+step 54000 | loss 1.5780 | bpb 0.8146 | bytes 101,824,433 | 78.0ms/step
+step 54000 | eval_loss 1.7155 | ema_eval_loss 1.6621 | eval_bpb 0.8855 | ema_eval_bpb 0.8580
+step 54100 | loss 1.5512 | bpb 0.8008 | bytes 100,095,913 | 134.2ms/step
+step 54200 | loss 1.6186 | bpb 0.8356 | bytes 104,445,280 | 78.0ms/step
+step 54300 | loss 1.7504 | bpb 0.9036 | bytes 112,946,632 | 78.0ms/step
+step 54400 | loss 1.7392 | bpb 0.8978 | bytes 112,226,670 | 78.1ms/step
+step 54500 | loss 1.6204 | bpb 0.8365 | bytes 104,557,064 | 78.1ms/step
+step 54600 | loss 1.5657 | bpb 0.8083 | bytes 101,032,657 | 78.0ms/step
+step 54700 | loss 1.6416 | bpb 0.8474 | bytes 105,924,633 | 78.1ms/step
+step 54800 | loss 1.4253 | bpb 0.7358 | bytes 91,970,235 | 78.1ms/step
+step 54900 | loss 1.4766 | bpb 0.7622 | bytes 95,280,552 | 78.0ms/step
+step 55000 | loss 1.6333 | bpb 0.8431 | bytes 105,391,616 | 78.1ms/step
+step 55000 | eval_loss 1.7142 | ema_eval_loss 1.6612 | eval_bpb 0.8849 | ema_eval_bpb 0.8575
+step 55100 | loss 2.0599 | bpb 1.0634 | bytes 132,920,732 | 134.0ms/step
+step 55200 | loss 1.6845 | bpb 0.8695 | bytes 108,693,071 | 78.0ms/step
+step 55300 | loss 2.0371 | bpb 1.0516 | bytes 131,449,333 | 78.1ms/step
+step 55400 | loss 1.8486 | bpb 0.9543 | bytes 119,287,784 | 78.0ms/step
+step 55500 | loss 1.8166 | bpb 0.9378 | bytes 117,222,722 | 78.1ms/step
+step 55600 | loss 1.8920 | bpb 0.9767 | bytes 122,086,029 | 78.2ms/step
+step 55700 | loss 1.8207 | bpb 0.9399 | bytes 117,484,081 | 78.0ms/step
+step 55800 | loss 1.7178 | bpb 0.8867 | bytes 110,841,378 | 78.1ms/step
+step 55900 | loss 1.9725 | bpb 1.0182 | bytes 127,277,687 | 78.1ms/step
+step 56000 | loss 1.3587 | bpb 0.7014 | bytes 87,670,660 | 78.2ms/step
+step 56000 | eval_loss 1.7154 | ema_eval_loss 1.6603 | eval_bpb 0.8855 | ema_eval_bpb 0.8571
+step 56100 | loss 2.0202 | bpb 1.0429 | bytes 130,357,622 | 134.1ms/step
+step 56200 | loss 1.3084 | bpb 0.6754 | bytes 84,428,781 | 78.0ms/step
+step 56300 | loss 1.7602 | bpb 0.9086 | bytes 113,579,294 | 78.0ms/step
+step 56400 | loss 1.5621 | bpb 0.8064 | bytes 100,799,106 | 78.0ms/step
+step 56500 | loss 1.6720 | bpb 0.8631 | bytes 107,890,949 | 78.1ms/step
+step 56600 | loss 1.8949 | bpb 0.9782 | bytes 122,272,835 | 78.2ms/step
+step 56700 | loss 1.8746 | bpb 0.9677 | bytes 120,963,211 | 78.1ms/step
+step 56800 | loss 1.9138 | bpb 0.9880 | bytes 123,493,929 | 78.2ms/step
+step 56900 | loss 1.5296 | bpb 0.7896 | bytes 98,700,521 | 78.1ms/step
+step 57000 | loss 1.2302 | bpb 0.6351 | bytes 79,382,752 | 78.0ms/step
+step 57000 | eval_loss 1.7152 | ema_eval_loss 1.6602 | eval_bpb 0.8854 | ema_eval_bpb 0.8570
+step 57100 | loss 2.0739 | bpb 1.0706 | bytes 133,821,429 | 134.4ms/step
+step 57200 | loss 1.6879 | bpb 0.8713 | bytes 108,912,061 | 78.0ms/step
+step 57300 | loss 1.7639 | bpb 0.9106 | bytes 113,821,514 | 78.1ms/step
+step 57400 | loss 1.5948 | bpb 0.8233 | bytes 102,907,267 | 78.1ms/step
+step 57500 | loss 1.8236 | bpb 0.9414 | bytes 117,673,140 | 78.1ms/step
+step 57600 | loss 1.7825 | bpb 0.9201 | bytes 115,017,547 | 78.1ms/step
+step 57700 | loss 2.0021 | bpb 1.0335 | bytes 129,191,542 | 78.2ms/step
+step 57800 | loss 1.7844 | bpb 0.9211 | bytes 115,141,853 | 78.1ms/step
+step 57900 | loss 1.6740 | bpb 0.8641 | bytes 108,016,417 | 78.1ms/step
+step 58000 | loss 1.6233 | bpb 0.8380 | bytes 104,748,246 | 78.2ms/step
+step 58000 | eval_loss 1.7135 | ema_eval_loss 1.6597 | eval_bpb 0.8845 | ema_eval_bpb 0.8568
+step 58100 | loss 1.5864 | bpb 0.8189 | bytes 102,367,242 | 136.1ms/step
+step 58200 | loss 1.6085 | bpb 0.8303 | bytes 103,791,941 | 78.1ms/step
+step 58300 | loss 1.4143 | bpb 0.7301 | bytes 91,260,658 | 78.0ms/step
+step 58400 | loss 1.4277 | bpb 0.7370 | bytes 92,123,495 | 78.1ms/step
+step 58500 | loss 1.7734 | bpb 0.9155 | bytes 114,432,707 | 78.1ms/step
+step 58600 | loss 1.6171 | bpb 0.8348 | bytes 104,346,051 | 78.1ms/step
+step 58700 | loss 1.6230 | bpb 0.8378 | bytes 104,730,046 | 78.1ms/step
+step 58800 | loss 1.8532 | bpb 0.9567 | bytes 119,582,142 | 78.1ms/step
+step 58900 | loss 1.8199 | bpb 0.9395 | bytes 117,431,751 | 78.1ms/step
+step 59000 | loss 1.7022 | bpb 0.8787 | bytes 109,840,635 | 78.2ms/step
+step 59000 | eval_loss 1.7127 | ema_eval_loss 1.6591 | eval_bpb 0.8841 | ema_eval_bpb 0.8564
+step 59100 | loss 1.7962 | bpb 0.9272 | bytes 115,902,991 | 134.1ms/step
+step 59200 | loss 1.6467 | bpb 0.8500 | bytes 106,254,714 | 78.2ms/step
+step 59300 | loss 1.6072 | bpb 0.8297 | bytes 103,710,135 | 78.2ms/step
+step 59400 | loss 1.5510 | bpb 0.8007 | bytes 100,083,821 | 78.3ms/step
+step 59500 | loss 1.1979 | bpb 0.6184 | bytes 77,294,845 | 78.3ms/step
+step 59600 | loss 1.5554 | bpb 0.8029 | bytes 100,363,264 | 78.3ms/step
+step 59700 | loss 1.7847 | bpb 0.9213 | bytes 115,163,284 | 78.3ms/step
+step 59800 | loss 1.5671 | bpb 0.8090 | bytes 101,123,356 | 78.3ms/step
+step 59900 | loss 1.4881 | bpb 0.7682 | bytes 96,020,928 | 78.3ms/step
+step 60000 | loss 1.4804 | bpb 0.7642 | bytes 95,524,034 | 78.4ms/step
+step 60000 | eval_loss 1.7136 | ema_eval_loss 1.6590 | eval_bpb 0.8846 | ema_eval_bpb 0.8564
+step 60100 | loss 2.0130 | bpb 1.0391 | bytes 129,890,796 | 134.3ms/step
+step 60200 | loss 1.8927 | bpb 0.9771 | bytes 122,131,783 | 78.9ms/step
+step 60300 | loss 1.6557 | bpb 0.8547 | bytes 106,835,392 | 78.2ms/step
+step 60400 | loss 1.6465 | bpb 0.8499 | bytes 106,241,422 | 78.3ms/step
+step 60500 | loss 1.7104 | bpb 0.8829 | bytes 110,365,660 | 78.2ms/step
+step 60600 | loss 1.7686 | bpb 0.9130 | bytes 114,125,072 | 78.3ms/step
+step 60700 | loss 1.3341 | bpb 0.6887 | bytes 86,084,031 | 78.3ms/step
+step 60800 | loss 1.8756 | bpb 0.9682 | bytes 121,027,918 | 78.3ms/step
+step 60900 | loss 1.7786 | bpb 0.9181 | bytes 114,768,542 | 78.3ms/step
+step 61000 | loss 1.7860 | bpb 0.9220 | bytes 115,245,052 | 78.4ms/step
+step 61000 | eval_loss 1.7115 | ema_eval_loss 1.6587 | eval_bpb 0.8835 | ema_eval_bpb 0.8563
+step 61100 | loss 1.5176 | bpb 0.7834 | bytes 97,926,815 | 134.1ms/step
+step 61200 | loss 1.4783 | bpb 0.7631 | bytes 95,388,566 | 78.2ms/step
+step 61300 | loss 1.8552 | bpb 0.9577 | bytes 119,710,225 | 78.3ms/step
+step 61400 | loss 1.3236 | bpb 0.6833 | bytes 85,410,347 | 78.3ms/step
+step 61500 | loss 1.8151 | bpb 0.9370 | bytes 117,124,200 | 78.3ms/step
+step 61600 | loss 1.6781 | bpb 0.8663 | bytes 108,281,345 | 78.4ms/step
+step 61700 | loss 1.9865 | bpb 1.0255 | bytes 128,184,300 | 78.2ms/step
+step 61800 | loss 1.7521 | bpb 0.9045 | bytes 113,058,015 | 78.2ms/step
+step 61900 | loss 1.9576 | bpb 1.0105 | bytes 126,316,067 | 78.2ms/step
+step 62000 | loss 1.8466 | bpb 0.9532 | bytes 119,156,039 | 78.2ms/step
+step 62000 | eval_loss 1.7109 | ema_eval_loss 1.6577 | eval_bpb 0.8832 | ema_eval_bpb 0.8558
+step 62100 | loss 1.7310 | bpb 0.8935 | bytes 111,693,269 | 134.1ms/step
+step 62200 | loss 1.5541 | bpb 0.8022 | bytes 100,280,465 | 78.2ms/step
+step 62300 | loss 1.5222 | bpb 0.7858 | bytes 98,224,304 | 78.1ms/step
+step 62400 | loss 1.6617 | bpb 0.8578 | bytes 107,227,295 | 78.2ms/step
+step 62500 | loss 1.7968 | bpb 0.9275 | bytes 115,940,475 | 78.2ms/step
+step 62600 | loss 2.0337 | bpb 1.0498 | bytes 131,230,674 | 78.2ms/step
+step 62700 | loss 1.5399 | bpb 0.7949 | bytes 99,367,583 | 78.2ms/step
+step 62800 | loss 1.8678 | bpb 0.9642 | bytes 120,522,255 | 78.3ms/step
+step 62900 | loss 1.5562 | bpb 0.8033 | bytes 100,414,333 | 78.2ms/step
+step 63000 | loss 1.7869 | bpb 0.9224 | bytes 115,302,905 | 78.3ms/step
+step 63000 | eval_loss 1.7088 | ema_eval_loss 1.6567 | eval_bpb 0.8821 | ema_eval_bpb 0.8552
+step 63100 | loss 1.8991 | bpb 0.9803 | bytes 122,543,178 | 134.1ms/step
+step 63200 | loss 2.0396 | bpb 1.0529 | bytes 131,606,316 | 78.3ms/step
+step 63300 | loss 1.7406 | bpb 0.8985 | bytes 112,314,085 | 78.3ms/step
+step 63400 | loss 1.7497 | bpb 0.9032 | bytes 112,905,478 | 78.2ms/step
+step 63500 | loss 1.6887 | bpb 0.8717 | bytes 108,965,507 | 78.3ms/step
+step 63600 | loss 1.5640 | bpb 0.8073 | bytes 100,918,197 | 78.3ms/step
+step 63700 | loss 1.7622 | bpb 0.9097 | bytes 113,707,438 | 78.3ms/step
+step 63800 | loss 1.9044 | bpb 0.9831 | bytes 122,884,782 | 78.2ms/step
+step 63900 | loss 1.6666 | bpb 0.8603 | bytes 107,538,138 | 78.2ms/step
+step 64000 | loss 1.3658 | bpb 0.7051 | bytes 88,131,832 | 78.2ms/step
+step 64000 | eval_loss 1.7100 | ema_eval_loss 1.6559 | eval_bpb 0.8827 | ema_eval_bpb 0.8548
+step 64100 | loss 1.8231 | bpb 0.9411 | bytes 117,640,333 | 133.9ms/step
+step 64200 | loss 1.7394 | bpb 0.8979 | bytes 112,241,247 | 78.2ms/step
+step 64300 | loss 1.7972 | bpb 0.9278 | bytes 115,970,836 | 78.1ms/step
+step 64400 | loss 1.2386 | bpb 0.6394 | bytes 79,920,908 | 78.2ms/step
+step 64500 | loss 1.8532 | bpb 0.9567 | bytes 119,584,557 | 78.2ms/step
+step 64600 | loss 1.6323 | bpb 0.8426 | bytes 105,328,978 | 78.2ms/step
+step 64700 | loss 1.7384 | bpb 0.8974 | bytes 112,174,832 | 78.1ms/step
+step 64800 | loss 1.6896 | bpb 0.8722 | bytes 109,024,568 | 78.1ms/step
+step 64900 | loss 1.8961 | bpb 0.9788 | bytes 122,351,857 | 78.2ms/step
+step 65000 | loss 1.9371 | bpb 1.0000 | bytes 124,993,851 | 78.2ms/step
+step 65000 | eval_loss 1.7103 | ema_eval_loss 1.6558 | eval_bpb 0.8829 | ema_eval_bpb 0.8548
+step 65100 | loss 1.7477 | bpb 0.9022 | bytes 112,774,033 | 134.1ms/step
+step 65200 | loss 1.7898 | bpb 0.9239 | bytes 115,492,326 | 78.0ms/step
+step 65300 | loss 1.5895 | bpb 0.8205 | bytes 102,566,901 | 78.1ms/step
+step 65400 | loss 1.5065 | bpb 0.7777 | bytes 97,210,761 | 78.1ms/step
+step 65500 | loss 1.8417 | bpb 0.9507 | bytes 118,840,381 | 78.0ms/step
+step 65600 | loss 1.4921 | bpb 0.7703 | bytes 96,283,087 | 78.1ms/step
+step 65700 | loss 1.9194 | bpb 0.9908 | bytes 123,855,010 | 78.2ms/step
+step 65800 | loss 1.5099 | bpb 0.7794 | bytes 97,428,051 | 78.1ms/step
+step 65900 | loss 1.8226 | bpb 0.9409 | bytes 117,607,210 | 78.1ms/step
+step 66000 | loss 1.6708 | bpb 0.8625 | bytes 107,808,597 | 78.1ms/step
+step 66000 | eval_loss 1.7088 | ema_eval_loss 1.6552 | eval_bpb 0.8821 | ema_eval_bpb 0.8544
+step 66100 | loss 1.8993 | bpb 0.9805 | bytes 122,559,109 | 133.9ms/step
+step 66200 | loss 1.5593 | bpb 0.8049 | bytes 100,617,746 | 78.1ms/step
+step 66300 | loss 1.3286 | bpb 0.6859 | bytes 85,732,412 | 78.1ms/step
+step 66400 | loss 1.4882 | bpb 0.7682 | bytes 96,028,267 | 78.1ms/step
+step 66500 | loss 1.8100 | bpb 0.9343 | bytes 116,792,296 | 78.1ms/step
+step 66600 | loss 1.9523 | bpb 1.0078 | bytes 125,975,471 | 78.1ms/step
+step 66700 | loss 1.7000 | bpb 0.8776 | bytes 109,697,945 | 78.1ms/step
+step 66800 | loss 1.4730 | bpb 0.7604 | bytes 95,050,893 | 78.0ms/step
+step 66900 | loss 1.6125 | bpb 0.8324 | bytes 104,048,192 | 78.1ms/step
+step 67000 | loss 1.9037 | bpb 0.9827 | bytes 122,837,021 | 78.1ms/step
+step 67000 | eval_loss 1.7083 | ema_eval_loss 1.6547 | eval_bpb 0.8819 | ema_eval_bpb 0.8542
+step 67100 | loss 1.9827 | bpb 1.0235 | bytes 127,936,126 | 133.9ms/step
+step 67200 | loss 1.7707 | bpb 0.9141 | bytes 114,260,217 | 78.0ms/step
+step 67300 | loss 1.3769 | bpb 0.7108 | bytes 88,846,785 | 78.0ms/step
+step 67400 | loss 1.8052 | bpb 0.9319 | bytes 116,483,569 | 78.1ms/step
+step 67500 | loss 1.5157 | bpb 0.7825 | bytes 97,806,377 | 78.0ms/step
+step 67600 | loss 1.3533 | bpb 0.6986 | bytes 87,322,087 | 78.1ms/step
+step 67700 | loss 1.5359 | bpb 0.7929 | bytes 99,107,286 | 78.1ms/step
+step 67800 | loss 1.7175 | bpb 0.8866 | bytes 110,824,071 | 78.1ms/step
+step 67900 | loss 1.7881 | bpb 0.9230 | bytes 115,380,989 | 78.0ms/step
+step 68000 | loss 1.8680 | bpb 0.9643 | bytes 120,537,608 | 80.4ms/step
+step 68000 | eval_loss 1.7073 | ema_eval_loss 1.6541 | eval_bpb 0.8813 | ema_eval_bpb 0.8539
+step 68100 | loss 1.5837 | bpb 0.8175 | bytes 102,188,375 | 138.2ms/step
+step 68200 | loss 1.8857 | bpb 0.9734 | bytes 121,676,396 | 85.4ms/step
+step 68300 | loss 1.8633 | bpb 0.9619 | bytes 120,231,281 | 86.4ms/step
+step 68400 | loss 1.7592 | bpb 0.9081 | bytes 113,516,633 | 81.4ms/step
+step 68500 | loss 1.7040 | bpb 0.8796 | bytes 109,954,126 | 81.6ms/step

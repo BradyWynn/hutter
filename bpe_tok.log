@@ -1,0 +1,2 @@
+trained 768 merges in 2s
+encoded 1,000,000,000 bytes -> 456,236,303 tokens (2.192 bytes/token) in 131s | wrote enwik9.split1024.i16, enwik9.split1024.json
