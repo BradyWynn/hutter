@@ -14,7 +14,7 @@ import matchfeat
 B, ACCUM, T, STEPS, LOG, CKPT = 16, 1, 2048, 100_000, 100, 1000
 LR_MUON, LR_WTE, LR_HEAD, LR_CONV, LR_SCALAR, LR_BIAS = 0.015, 0.005, 0.001818, 0.003, 0.003, 0.0209
 WD_MUON, WD_ADAM = 0.005, 0.005
-WARMUP, COOLDOWN = 0, 0.30
+WARMUP, COOLDOWN = 0, 0.50
 # Optional checkpointing:
 # - INIT_FROM: load model weights (and seed EMA from them) for a fresh schedule / cooldown / QAT branch
 # - RESUME: resume full state (model, ema, optimizers, step, RNG) from a saved ckpt.pt
