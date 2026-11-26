@@ -17,15 +17,17 @@ import numpy as np
 from tokenizers import Tokenizer, Regex, models, trainers, pre_tokenizers
 
 CHUNK = 1 << 16
-TRAIN_MB = 30
+CHUNK_NOSPLIT = 4096
+TRAIN_MB = 64
+TRAIN_MB_NOSPLIT = 24
 GPT2 = r"""'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 ALPHABET = [chr(b) for b in range(256)]
 
 
-def chunks(text):
+def chunks(text, chunk_size=CHUNK):
     i = 0
     while i < len(text):
-        j = text.find("\n", i + CHUNK)
+        j = text.find("\n", i + chunk_size)
         j = len(text) if j < 0 else j + 1
         yield text[i:j]
         i = j
@@ -61,11 +63,27 @@ def main(scheme, vocab_size, path="enwik9"):
         vocab_size=vocab_size, initial_alphabet=ALPHABET, limit_alphabet=256,
         min_frequency=2, show_progress=False,
     )
-    tok.train_from_iterator(chunks(text[: TRAIN_MB << 20]), tr)
+    chunk_size = CHUNK_NOSPLIT if scheme == "nosplit" else CHUNK
+    all_chunks = list(chunks(text, chunk_size))
+    if scheme == "split":
+        # Full-file BPE training for exact global optimal merges (~30-45s on 1 GB in parallel Rust)
+        sample_chunks = all_chunks
+        sample_mb = len(text) / (1 << 20)
+        sample_mode = "full"
+    else:
+        n_sample = max(1, min(len(all_chunks), (TRAIN_MB_NOSPLIT << 20) // chunk_size))
+        sample_idx = np.linspace(0, len(all_chunks) - 1, n_sample, dtype=np.int64)
+        sample_chunks = [all_chunks[int(i)] for i in sample_idx]
+        sample_mb = sum(len(c) for c in sample_chunks) / (1 << 20)
+        sample_mode = "uniform"
+    tok.train_from_iterator(sample_chunks, tr)
     merges = json.loads(tok.to_str())["model"]["merges"]
     merges = [m.split(" ", 1) if isinstance(m, str) else list(m) for m in merges]
-    json.dump(dict(scheme=scheme, chunk=CHUNK, train_mb=TRAIN_MB, merges=merges), open(prefix + ".json", "w"))
-    print(f"trained {len(merges)} merges in {time.time() - t0:.0f}s", flush=True)
+    json.dump(
+        dict(scheme=scheme, chunk=chunk_size, train_mb=round(sample_mb, 2), train_sample=sample_mode, merges=merges),
+        open(prefix + ".json", "w"),
+    )
+    print(f"trained {len(merges)} merges on {sample_mb:.1f} MB ({sample_mode}, {len(sample_chunks)}/{len(all_chunks)} chunks) in {time.time() - t0:.0f}s", flush=True)
 
     tok, vocab = load(prefix)
     assert len(vocab) == vocab_size, (len(vocab), vocab_size)
@@ -92,7 +110,7 @@ def main(scheme, vocab_size, path="enwik9"):
             batch.clear()
 
         size = 0
-        for c in chunks(text):
+        for c in all_chunks:
             batch.append(c)
             size += len(c)
             if size >= 32 << 20:
@@ -107,4 +125,4 @@ def main(scheme, vocab_size, path="enwik9"):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], int(sys.argv[2]))
+    main(sys.argv[1], int(sys.argv[2]), sys.argv[3] if len(sys.argv) > 3 else "enwik9")

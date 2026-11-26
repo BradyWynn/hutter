@@ -1,6 +1,7 @@
 __pycache__/
 .venv/
 log/
+runs/
 wandb/
 model/
 compressed_model/

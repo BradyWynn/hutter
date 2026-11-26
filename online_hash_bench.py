@@ -1,15 +1,19 @@
 """Benchmark zero-archive-cost output-side online hash dictionaries on top of a frozen Transformer.
 
-Evaluates strictly causal prequential compression over a contiguous slice of enwik9.split4096:
-  1. Baseline: frozen Transformer (model_ema_v2_59k.pt) with T=2048 sliding-window inference
+Evaluates strictly causal prequential compression over a contiguous slice of enwik9:
+  1. Baseline: frozen v8+ Transformer with T=2048 sliding-window inference
   2. Design 1 (Dense Online Engram-Head): M hash tables of dense d-dim vectors added before lm_head
      with exact closed-form gradient g = W_eff^T (p - e_y) (zero trunk backprop)
   3. Design 2 (Sparse Top-K Online Logit Bucket): M hash tables storing up to K (token_id, delta)
      entries per context hash, updated strictly token-by-token (S=1) in compiled C using the exact
      sparse-delta softmax identity (zero matmuls, zero trunk backprop)
-  4. Design 3 (Hybrid): Design 1 + Design 2 combined
+
+Usage:
+  python online_hash_bench.py model_ema.pt --data enwik9.split4096 --n-eval 8388608
 """
+import argparse
 import ctypes
+import json
 import math
 import os
 import subprocess
@@ -20,30 +24,38 @@ import torch.nn.functional as F
 from model import GPT, GPTConfig
 import matchfeat
 
-SCRATCH = "/home/brady/.gemini/antigravity-cli/brain/d12bab96-3c3e-4e36-9db9-f039f2dbf177/scratch"
-os.makedirs(SCRATCH, exist_ok=True)
 
-CKPT = "model_ema_v2_59k.pt"
-DATA = "enwik9.split4096"
-MATCH_K = (2, 5, 13, 27)
-T = 2048
-STRIDE = 1024  # every scored token gets 1024..2047 tokens of Transformer context
-N_EVAL = 8 * 1024 * 1024  # 8,388,608 contiguous tokens (~23.4 MB of enwik9)
-START_OFFSET = 0  # start from beginning of enwik9 (true cold start)
-N_BYTES_GLOBAL = 1_000_000_000
+def load_ckpt_sd(path):
+    raw = torch.load(path, map_location="cuda", weights_only=False)
+    if isinstance(raw, dict) and "ema" in raw and raw["ema"] is not None:
+        return raw["ema"]
+    if isinstance(raw, dict) and "model" in raw:
+        return raw["model"]
+    return raw
 
 
-def build_or_load_cache():
-    cache_dir = os.path.join(SCRATCH, f"cache_{CKPT}_{START_OFFSET}_{N_EVAL}")
+def build_or_load_cache(args):
+    os.makedirs(args.cache_dir, exist_ok=True)
+    ckpt_tag = os.path.basename(args.ckpt).replace("/", "_")
+    cache_dir = os.path.join(args.cache_dir, f"cache_{ckpt_tag}_{args.data}_{args.start_offset}_{args.n_eval}")
     done_flag = os.path.join(cache_dir, "done")
-    toks_all = np.fromfile(DATA + ".i16", dtype=np.int16)
-    N_total = len(toks_all)
-    bpt_global = N_BYTES_GLOBAL / N_total
 
-    sd = torch.load(CKPT, map_location="cuda", weights_only=True)
-    scale = sd["logit_scale"].float()
-    W_eff = (sd["wte.weight"].float() * scale).cpu().numpy().astype(np.float32)
-    b_head = (sd["lm_head.bias"].float() * scale).cpu().numpy().astype(np.float32)
+    toks_all = np.fromfile(args.data + ".i16", dtype=np.int16)
+    n_total = len(toks_all)
+    n_bytes_global = os.path.getsize("enwik9")
+    bpt_global = n_bytes_global / n_total
+    vocab_size = 256 + len(json.load(open(args.data + ".json"))["merges"])
+
+    sd = load_ckpt_sd(args.ckpt)
+    n_embd = sd["wte.weight"].shape[1]
+    n_match = sd["match_gate"].shape[0] if "match_gate" in sd else 0
+    if "logit_scale" in sd:
+        scale = sd["logit_scale"].float()
+        W_eff = (sd["wte.weight"].float() * scale).cpu().numpy().astype(np.float32)
+        b_head = (sd["lm_head.bias"].float() * scale).cpu().numpy().astype(np.float32)
+    else:
+        W_eff = sd["lm_head.weight"].float().cpu().numpy().astype(np.float32)
+        b_head = sd["lm_head.bias"].float().cpu().numpy().astype(np.float32)
 
     if os.path.exists(done_flag):
         print(f"Loading cached hidden states from {cache_dir}")
@@ -51,108 +63,100 @@ def build_or_load_cache():
         mp_arr = np.load(os.path.join(cache_dir, "mp.npy"))
         mb_arr = np.load(os.path.join(cache_dir, "mb.npy"))
         ctx_toks = np.load(os.path.join(cache_dir, "ctx_toks.npy"))
-        # Recompute exact float32 Z and base_nll from cached H (fp16), W_eff (fp32), b_head (fp32), mb (fp16)
-        # so sparse-delta softmax in C matches Z_base to machine precision (<1e-5)!
-        N = len(mp_arr)
-        ctx_pad = len(ctx_toks) - N
-        y_all = ctx_toks[ctx_pad:].astype(np.int64)
+        N = len(ctx_toks) - 16
+        y_all = ctx_toks[16:].astype(np.int64)
         W_t = torch.from_numpy(W_eff).cuda()
         b_t = torch.from_numpy(b_head).cuda()
         Z = np.empty(N, dtype=np.float32)
         base_nll = np.empty(N, dtype=np.float32)
         with torch.no_grad():
+            torch.set_float32_matmul_precision("highest")
             for a in range(0, N, 65536):
                 b_end = min(a + 65536, N)
                 hb = torch.from_numpy(np.array(H[a:b_end])).cuda().float()
                 lg = hb @ W_t.t() + b_t
-                lg.scatter_add_(1, torch.from_numpy(mp_arr[a:b_end]).cuda().long(), torch.from_numpy(mb_arr[a:b_end]).cuda().float())
+                if n_match > 0:
+                    lg.scatter_add_(
+                        1,
+                        torch.from_numpy(mp_arr[a:b_end]).cuda().long(),
+                        torch.from_numpy(mb_arr[a:b_end]).cuda().float(),
+                    )
                 z = torch.logsumexp(lg, dim=-1)
                 yb = torch.from_numpy(y_all[a:b_end]).cuda()
                 Z[a:b_end] = z.cpu().numpy()
                 base_nll[a:b_end] = (z - lg.gather(1, yb[:, None]).squeeze(1)).cpu().numpy()
-        return H, Z, base_nll, mp_arr, mb_arr, ctx_toks, W_eff, b_head, bpt_global
+        return H, Z, base_nll, mp_arr, mb_arr, ctx_toks, W_eff, b_head, bpt_global, n_embd, n_match, vocab_size
 
     os.makedirs(cache_dir, exist_ok=True)
     torch.set_float32_matmul_precision("high")
     data_gpu = torch.from_numpy(toks_all).cuda()
-    match_tables = matchfeat.cached(data_gpu, MATCH_K, DATA)
+    match_k = tuple(int(x) for x in args.match_k.split(",") if x) if n_match else ()
+    assert len(match_k) == n_match, f"ckpt has n_match={n_match}, got --match-k={match_k}"
+    match_tables = matchfeat.cached(data_gpu, match_k, args.data) if match_k else ()
 
-    cfg = GPTConfig(context_length=T, vocab_size=4096, n_match=len(MATCH_K), match_codes=matchfeat.N_CODE)
+    T, STRIDE, N_EVAL = args.T, args.stride, args.n_eval
+    cfg = GPTConfig(
+        context_length=T,
+        vocab_size=vocab_size,
+        n_embd=n_embd,
+        n_match=n_match,
+        match_codes=matchfeat.N_CODE,
+    )
     model = GPT(cfg).cuda().eval()
     model.load_state_dict(sd)
     for p in model.parameters():
         p.requires_grad_(False)
+    model.build_swa_mask()
 
-    # Extract norm(x) right before lm_head, plus exact logits_base, Z_base, match bonus
     @torch.compile
     def run_window(x, mp, ml):
         with torch.autocast("cuda", torch.bfloat16):
-            T_ = x.shape[1]
-            h = model.wte(x)
-            mp_l, ml_l = mp.long(), ml.long()
-            has = (ml_l > 0).to(h.dtype)
-            gate = model.match_gate[model.match_col, ml_l] * has
-            h = h + (model.wte(mp_l) * gate.unsqueeze(-1)).sum(2)
-            h = F.rms_norm(h, (h.size(-1),), eps=1e-6)
-            x0 = h
-            cos, sin = model.cos[:, :T_], model.sin[:, :T_]
-            v0 = None
-            p = 0
-            for loop in range(model.c.n_loop):
-                if model.loop_emb is not None:
-                    h = h + model.loop_emb[loop].to(h.dtype)
-                for b in model.h:
-                    h = model.resid_lambdas[p].to(h.dtype) * h + model.x0_lambdas[p].to(h.dtype) * x0
-                    v_lam = model.v_lambdas[p].to(h.dtype) if p > 0 else None
-                    h, v0 = b(h, cos, sin, v0=v0, v_lambda=v_lam)
-                    p += 1
-            hn = F.rms_norm(h, (h.size(-1),), eps=1e-6)
-            logits = model.lm_head(hn) * model.logit_scale.to(hn.dtype)
-            bonus = (model.match_logit[model.match_col, ml_l] * has).to(logits.dtype)
-            logits = logits.scatter_add(-1, mp_l, bonus)
-            return hn, logits, bonus
+            return model(x, mp, ml, return_features=True)
 
-    # We score targets at positions [start0 .. start0 + N_EVAL - 1], where start0 >= T - STRIDE
-    # so every scored target has at least STRIDE=1024 context tokens!
-    start0 = max(START_OFFSET, T - STRIDE)
+    start0 = max(args.start_offset, T - STRIDE)
     n_win = N_EVAL // STRIDE
     assert n_win * STRIDE == N_EVAL
 
-    H_out = np.lib.format.open_memmap(os.path.join(cache_dir, "H.npy"), mode="w+", dtype=np.float16, shape=(N_EVAL, 256))
+    H_out = np.lib.format.open_memmap(os.path.join(cache_dir, "H.npy"), mode="w+", dtype=np.float16, shape=(N_EVAL, n_embd))
     Z_out = np.empty(N_EVAL, dtype=np.float32)
     nll_out = np.empty(N_EVAL, dtype=np.float32)
-    mp_out = np.empty((N_EVAL, 4), dtype=np.int16)
-    mb_out = np.empty((N_EVAL, 4), dtype=np.float16)
+    mp_out = np.empty((N_EVAL, max(n_match, 1)), dtype=np.int16)
+    mb_out = np.empty((N_EVAL, max(n_match, 1)), dtype=np.float16)
 
-    # Save tokens from start0 - 16 through start0 + N_EVAL for exact n-gram hashing
     ctx_pad = 16
     ctx_toks = toks_all[start0 - ctx_pad : start0 + N_EVAL].copy()
     np.save(os.path.join(cache_dir, "ctx_toks.npy"), ctx_toks)
 
-    B = 16
+    B = args.batch_size
     offs = torch.arange(T + 1, device="cuda")
+    W_t = torch.from_numpy(W_eff).cuda()
+    b_t = torch.from_numpy(b_head).cuda()
     t0 = time.time()
     with torch.no_grad():
         for w0 in range(0, n_win, B):
             wb = min(B, n_win - w0)
-            # For window k, we want to score targets at [start0 + k*STRIDE .. start0 + (k+1)*STRIDE - 1].
-            # Window input x is tokens [s .. s + T - 1], predicting targets [s + 1 .. s + T].
-            # Setting s = start0 + k*STRIDE - (T - STRIDE) - 1 puts those targets in the LAST STRIDE positions!
             starts = [start0 + (w0 + j) * STRIDE - (T - STRIDE) - 1 for j in range(wb)]
             st_t = torch.tensor(starts, dtype=torch.long, device="cuda")
             seq = data_gpu[st_t[:, None] + offs].long()
-            mp_np = np.stack([match_tables[0][s + 1 : s + 1 + T] for s in starts])
-            ml_np = np.stack([match_tables[1][s + 1 : s + 1 + T] for s in starts])
-            mp_t = torch.from_numpy(mp_np).cuda()
-            ml_t = torch.from_numpy(ml_np).cuda()
+            if n_match:
+                mp_np = np.stack([match_tables[0][s + 1 : s + 1 + T] for s in starts])
+                ml_np = np.stack([match_tables[1][s + 1 : s + 1 + T] for s in starts])
+                mp_t = torch.from_numpy(mp_np).cuda()
+                ml_t = torch.from_numpy(ml_np).cuda()
+            else:
+                mp_t = ml_t = None
 
-            hn, logits, bonus = run_window(seq[:, :-1], mp_t, ml_t)
-            # Take last STRIDE positions (each has 1024..2047 tokens of Transformer context)
-            hn_s = hn[:, -STRIDE:, :].reshape(-1, 256)
-            lg_s = logits[:, -STRIDE:, :].reshape(-1, 4096).float()
+            _, hn, bonus = run_window(seq[:, :-1], mp_t, ml_t)
+            hn_h = hn[:, -STRIDE:, :].reshape(-1, n_embd).half()
             y_s = seq[:, 1:][:, -STRIDE:].reshape(-1)
-            mp_s = mp_t[:, -STRIDE:, :].reshape(-1, 4)
-            bo_s = bonus[:, -STRIDE:, :].reshape(-1, 4)
+            # Compute exact fp32 Z and base_nll from fp16 hn/bonus so C sparse-delta matches to <1e-5 on cold build too
+            torch.set_float32_matmul_precision("highest")
+            lg_s = hn_h.float() @ W_t.t() + b_t
+            torch.set_float32_matmul_precision("high")
+            if n_match:
+                mp_s = mp_t[:, -STRIDE:, :].reshape(-1, n_match)
+                bo_h = bonus[:, -STRIDE:, :].reshape(-1, n_match).half()
+                lg_s.scatter_add_(1, mp_s.long(), bo_h.float())
 
             z_s = torch.logsumexp(lg_s, dim=-1)
             y_lg = lg_s.gather(1, y_s[:, None]).squeeze(1)
@@ -160,11 +164,15 @@ def build_or_load_cache():
 
             i0 = w0 * STRIDE
             i1 = i0 + wb * STRIDE
-            H_out[i0:i1] = hn_s.half().cpu().numpy()
+            H_out[i0:i1] = hn_h.cpu().numpy()
             Z_out[i0:i1] = z_s.cpu().numpy()
             nll_out[i0:i1] = nll_s.cpu().numpy()
-            mp_out[i0:i1] = mp_s.cpu().numpy()
-            mb_out[i0:i1] = bo_s.half().cpu().numpy()
+            if n_match:
+                mp_out[i0:i1] = mp_s.cpu().numpy()
+                mb_out[i0:i1] = bo_h.cpu().numpy()
+            else:
+                mp_out[i0:i1] = 0
+                mb_out[i0:i1] = 0
 
             if (w0 // B) % 100 == 0 or w0 + wb == n_win:
                 done = i1
@@ -178,7 +186,7 @@ def build_or_load_cache():
     np.save(os.path.join(cache_dir, "mb.npy"), mb_out)
     open(done_flag, "w").close()
     print(f"Cache complete in {time.time()-t0:.1f}s")
-    return H_out, Z_out, nll_out, mp_out, mb_out, ctx_toks, W_eff, b_head, bpt_global
+    return H_out, Z_out, nll_out, mp_out, mb_out, ctx_toks, W_eff, b_head, bpt_global, n_embd, n_match, vocab_size
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +199,6 @@ C_SRC = r"""
 #include <math.h>
 #include <stdio.h>
 
-// Fast 64-bit splitmix / FNV mixing
 static inline uint64_t mix64(uint64_t x) {
     x ^= x >> 30;
     x *= 0xbf58476d1ce4e5b9ULL;
@@ -201,17 +208,19 @@ static inline uint64_t mix64(uint64_t x) {
     return x;
 }
 
-static inline float dot256_f16_f32(const uint16_t *h16, const float *w) {
-    // IEEE-754 float16 -> float32 via _Float16 (GCC 14 native AVX2/F16C!)
+static inline float dot_f16_f32(const uint16_t *h16, const float *w, int D) {
     const _Float16 *hf = (const _Float16 *)h16;
     float s0 = 0.f, s1 = 0.f, s2 = 0.f, s3 = 0.f;
-    for (int i = 0; i < 256; i += 4) {
+    int i = 0;
+    for (; i + 3 < D; i += 4) {
         s0 += (float)hf[i]   * w[i];
         s1 += (float)hf[i+1] * w[i+1];
         s2 += (float)hf[i+2] * w[i+2];
         s3 += (float)hf[i+3] * w[i+3];
     }
-    return (s0 + s1) + (s2 + s3);
+    float sum = (s0 + s1) + (s2 + s3);
+    for (; i < D; i++) sum += (float)hf[i] * w[i];
+    return sum;
 }
 
 #define KMAX 8
@@ -221,25 +230,21 @@ typedef struct {
     int16_t tok[KMAX];
     float   val[KMAX];
     uint16_t cnt;
-    uint16_t tag; // 16-bit hash tag to reject collisions!
+    uint16_t tag;
 } Bucket;
 
-// Run exact S=1 token-by-token sparse-bucket online logit dictionary!
-// orders: array of M context specs:
-//   order > 0: exact n-gram of length `order` (tokens t-order..t-1)
-//   order == -1: skip-bigram (t-3, t-1)
-//   order == -2: skip-bigram (t-4, t-1)
-//   order == -3: skip-trigram (t-4, t-2, t-1)
 void run_sparse_bucket(
     int N,
     int ctx_pad,
-    const int16_t *ctx_toks,     // length N + ctx_pad; target y_t is ctx_toks[ctx_pad + t]
-    const uint16_t *H16,         // [N, 256] float16
+    int D,
+    int n_match,
+    const int16_t *ctx_toks,     // length N + ctx_pad
+    const uint16_t *H16,         // [N, D] float16
     const float *Z_base,         // [N]
-    const int16_t *mp,           // [N, 4]
-    const uint16_t *mb16,        // [N, 4] float16
-    const float *W_eff,          // [4096, 256]
-    const float *b_head,         // [4096]
+    const int16_t *mp,           // [N, max(n_match, 1)]
+    const uint16_t *mb16,        // [N, max(n_match, 1)] float16
+    const float *W_eff,          // [V, D]
+    const float *b_head,         // [V]
     int M,
     const int *orders,
     const int *table_bits,
@@ -268,12 +273,12 @@ void run_sparse_bucket(
     float   cand_p[MMAX * KMAX + 2];
     uint64_t rows[MMAX];
     uint16_t tags[MMAX];
+    int match_stride = n_match > 0 ? n_match : 1;
 
     for (int t = 0; t < N; t++) {
         int pos = ctx_pad + t;
         int16_t y = ctx_toks[pos];
 
-        // 1. Compute M context hashes (strictly causal: uses only ctx_toks[< pos])
         int n_cand = 0;
         for (int m = 0; m < M; m++) {
             int ord = orders[m];
@@ -297,16 +302,12 @@ void run_sparse_bucket(
             tags[m] = (uint16_t)((h >> 48) | 1);
 
             Bucket *bk = &tables[m][rows[m]];
-            if (use_tag && bk->cnt > 0 && bk->tag != tags[m]) {
-                // Hash collision with a different context -> skip reading
-                continue;
-            }
+            if (use_tag && bk->cnt > 0 && bk->tag != tags[m]) continue;
             for (int k = 0; k < K; k++) {
                 int16_t tk = bk->tok[k];
                 if (tk < 0) continue;
                 float v = bk->val[k];
                 if (v == 0.f) continue;
-                // Merge into unique candidate list
                 int found = -1;
                 for (int c = 0; c < n_cand; c++) {
                     if (cand_tok[c] == tk) { found = c; break; }
@@ -321,7 +322,6 @@ void run_sparse_bucket(
             }
         }
 
-        // Ensure true target y is in candidate list (so we always get exact nll and grad!)
         int y_idx = -1;
         for (int c = 0; c < n_cand; c++) {
             if (cand_tok[c] == y) { y_idx = c; break; }
@@ -333,17 +333,16 @@ void run_sparse_bucket(
             n_cand++;
         }
 
-        // 2. Compute exact base logits ONLY for the <= n_cand tokens
-        const uint16_t *h_row = H16 + (size_t)t * 256;
-        const int16_t *mp_row = mp + (size_t)t * 4;
-        const _Float16 *mb_row = (const _Float16 *)(mb16 + (size_t)t * 4);
+        const uint16_t *h_row = H16 + (size_t)t * (size_t)D;
+        const int16_t *mp_row = mp + (size_t)t * (size_t)match_stride;
+        const _Float16 *mb_row = (const _Float16 *)(mb16 + (size_t)t * (size_t)match_stride);
         float z0 = Z_base[t];
         float max_l = z0;
 
         for (int c = 0; c < n_cand; c++) {
             int16_t tk = cand_tok[c];
-            float lg = dot256_f16_f32(h_row, W_eff + (size_t)tk * 256) + b_head[tk];
-            for (int j = 0; j < 4; j++) {
+            float lg = dot_f16_f32(h_row, W_eff + (size_t)tk * (size_t)D, D) + b_head[tk];
+            for (int j = 0; j < n_match; j++) {
                 if (mp_row[j] == tk) lg += (float)mb_row[j];
             }
             cand_base[c] = lg;
@@ -351,7 +350,6 @@ void run_sparse_bucket(
             if (lnew > max_l) max_l = lnew;
         }
 
-        // 3. Exact sparse-delta partition function Z_new
         double sum_exp = exp((double)(z0 - max_l));
         for (int c = 0; c < n_cand; c++) {
             if (cand_delta[c] != 0.f) {
@@ -363,20 +361,16 @@ void run_sparse_bucket(
         if (sum_exp < 1e-30) sum_exp = 1e-30;
         float z_new = max_l + (float)log(sum_exp);
 
-        // Exact NLL for true target y
         float y_lnew = cand_base[y_idx] + cand_delta[y_idx];
         out_nll[t] = z_new - y_lnew;
 
-        // Exact probabilities for candidates
         for (int c = 0; c < n_cand; c++) {
             cand_p[c] = expf((cand_base[c] + cand_delta[c]) - z_new);
         }
 
-        // 4. Online causal SGD update for each table
         for (int m = 0; m < M; m++) {
             Bucket *bk = &tables[m][rows[m]];
             if (use_tag && bk->cnt > 0 && bk->tag != tags[m]) {
-                // Overwrite collided bucket cleanly
                 for (int k = 0; k < K; k++) { bk->tok[k] = -1; bk->val[k] = 0.f; }
                 bk->cnt = 0;
             }
@@ -384,9 +378,7 @@ void run_sparse_bucket(
             float step_lr = lrs[m] / powf((float)bk->cnt + count_c0, count_pow);
             if (bk->cnt < 65535) bk->cnt++;
 
-            int y_slot = -1;
-            int empty_slot = -1;
-            int min_slot = 0;
+            int y_slot = -1, empty_slot = -1, min_slot = 0;
             float min_abs = 1e30f;
 
             for (int k = 0; k < K; k++) {
@@ -396,7 +388,6 @@ void run_sparse_bucket(
                     continue;
                 }
                 if (tk == y) y_slot = k;
-                // Find prob of tk in cand list
                 float p_tk = 0.f;
                 for (int c = 0; c < n_cand; c++) {
                     if (cand_tok[c] == tk) { p_tk = cand_p[c]; break; }
@@ -419,15 +410,16 @@ void run_sparse_bucket(
 """
 
 
-def compile_c_ext():
-    c_path = os.path.join(SCRATCH, "online_hash.c")
-    so_path = os.path.join(SCRATCH, "online_hash.so")
+def compile_c_ext(cache_dir):
+    os.makedirs(cache_dir, exist_ok=True)
+    c_path = os.path.join(cache_dir, "online_hash.c")
+    so_path = os.path.join(cache_dir, "online_hash.so")
     with open(c_path, "w") as f:
         f.write(C_SRC)
     subprocess.check_call(["gcc", "-O3", "-march=native", "-ffast-math", "-shared", "-fPIC", c_path, "-o", so_path, "-lm"])
     lib = ctypes.CDLL(so_path)
     lib.run_sparse_bucket.argtypes = [
-        ctypes.c_int, ctypes.c_int,
+        ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
         ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
         ctypes.c_void_p, ctypes.c_void_p,
         ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
@@ -437,31 +429,32 @@ def compile_c_ext():
     return lib
 
 
-def bench_design1_dense_engram(H_mm, Z_np, mp_np, mb_np, ctx_toks, W_eff_np, b_head_np, bpt_global,
-                               orders=(1, 2, 3, 4), bits=(18, 21, 21, 21), dim=64,
-                               chunk_s=64, lr=0.25, decay=1e-4, count_pow=0.25, count_c0=2.0):
-    """Design 1: Dense low-rank online hash embeddings in top-d SVD subspace of W_eff (or full d=256)."""
+def bench_design1_dense_engram(
+    H_mm, Z_np, mp_np, mb_np, ctx_toks, W_eff_np, b_head_np, bpt_global, n_match,
+    orders=(1, 2, 3, 4), bits=(18, 21, 21, 21), dim=64,
+    chunk_s=64, lr=0.25, decay=1e-4, count_pow=0.25, count_c0=2.0,
+):
+    """Design 1: Dense low-rank online hash embeddings in top-d SVD subspace of W_eff (or full D)."""
     t0 = time.time()
     N = len(Z_np)
     ctx_pad = len(ctx_toks) - N
-    W_t = torch.from_numpy(W_eff_np).cuda()  # [4096, 256]
-    b_t = torch.from_numpy(b_head_np).cuda()  # [4096]
+    D = W_eff_np.shape[1]
+    W_t = torch.from_numpy(W_eff_np).cuda()
+    b_t = torch.from_numpy(b_head_np).cuda()
 
-    if dim < 256:
-        # Project onto top-dim singular vectors of W_eff (fixed, zero extra archive cost since W_eff is shipped!)
-        U, S, Vh = torch.linalg.svd(W_t, full_matrices=False)
-        P = Vh[:dim, :].contiguous()  # [dim, 256]
-        W_sub = (W_t @ P.t()).contiguous()  # [4096, dim]
+    if dim < D:
+        _, _, Vh = torch.linalg.svd(W_t, full_matrices=False)
+        P = Vh[:dim, :].contiguous()
+        W_sub = (W_t @ P.t()).contiguous()
     else:
-        W_sub = W_t.contiguous()  # [4096, 256]
+        dim = D
+        W_sub = W_t.contiguous()
 
-    # Allocate zero-initialized tables on GPU (float16) + visit counters (int32)
     M = len(orders)
     tables = [torch.zeros((1 << b, dim), dtype=torch.float16, device="cuda") for b in bits]
     counts = [torch.zeros((1 << b,), dtype=torch.float32, device="cuda") for b in bits]
     ram_mb = sum(t.numel() * 2 + c.numel() * 4 for t, c in zip(tables, counts)) / 1e6
 
-    # Precompute causal hashes on CPU (numpy vectorized, fast!)
     hashes = []
     for m, (ord_, b) in enumerate(zip(orders, bits)):
         h = np.full(N, np.uint64(0x9e3779b97f4a7c15 ^ (m + 1)), dtype=np.uint64)
@@ -476,19 +469,18 @@ def bench_design1_dense_engram(H_mm, Z_np, mp_np, mb_np, ctx_toks, W_eff_np, b_h
     y_all = ctx_toks[ctx_pad:].astype(np.int64)
     nll_out = np.empty(N, dtype=np.float32)
 
-    # Stream in macro-blocks of 32,768 tokens to GPU, updating every chunk_s tokens
     macro = 32768
     for a in range(0, N, macro):
         b_end = min(a + macro, N)
         H_blk = torch.from_numpy(np.array(H_mm[a:b_end])).cuda().float()
-        mp_blk = torch.from_numpy(mp_np[a:b_end]).cuda().long()
-        mb_blk = torch.from_numpy(mb_np[a:b_end]).cuda().float()
         y_blk = torch.from_numpy(y_all[a:b_end]).cuda()
         h_blks = [torch.from_numpy(hashes[m][a:b_end]).cuda() for m in range(M)]
 
-        # Reconstruct base logits for macro-block once
         lg_base = H_blk @ W_t.t() + b_t
-        lg_base.scatter_add_(1, mp_blk, mb_blk)
+        if n_match > 0:
+            mp_blk = torch.from_numpy(mp_np[a:b_end]).cuda().long()
+            mb_blk = torch.from_numpy(mb_np[a:b_end]).cuda().float()
+            lg_base.scatter_add_(1, mp_blk, mb_blk)
 
         nll_blk = torch.empty(b_end - a, dtype=torch.float32, device="cuda")
         for s0 in range(0, b_end - a, chunk_s):
@@ -502,12 +494,10 @@ def bench_design1_dense_engram(H_mm, Z_np, mp_np, mb_np, ctx_toks, W_eff_np, b_h
             logp = F.log_softmax(lg, dim=-1)
             nll_blk[s0:s1] = -logp.gather(1, y_s[:, None]).squeeze(1)
 
-            # Exact gradient w.r.t. e_sum: W_sub^T (p - e_y)
             p = logp.exp()
             p.scatter_add_(1, y_s[:, None], torch.full((s1 - s0, 1), -1.0, device="cuda"))
-            g = p @ W_sub  # [chunk_s, dim]
+            g = p @ W_sub
 
-            # Sparse causal update
             for m in range(M):
                 idx = idxs[m]
                 c = counts[m][idx]
@@ -528,17 +518,28 @@ def bench_design1_dense_engram(H_mm, Z_np, mp_np, mb_np, ctx_toks, W_eff_np, b_h
 
 
 def main():
-    H, Z, base_nll, mp, mb, ctx_toks, W_eff, b_head, bpt = build_or_load_cache()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("ckpt", nargs="?", default="model_ema.pt")
+    ap.add_argument("--data", default="enwik9.split4096")
+    ap.add_argument("--match-k", default="2,3,5,8,13,27")
+    ap.add_argument("--T", type=int, default=2048)
+    ap.add_argument("--stride", type=int, default=1024)
+    ap.add_argument("--n-eval", type=int, default=8 * 1024 * 1024)
+    ap.add_argument("--start-offset", type=int, default=0)
+    ap.add_argument("--batch-size", type=int, default=16)
+    ap.add_argument("--cache-dir", default="/tmp/hutter_online_hash")
+    args = ap.parse_args()
+
+    H, Z, base_nll, mp, mb, ctx_toks, W_eff, b_head, bpt, n_embd, n_match, _ = build_or_load_cache(args)
     N = len(Z)
     ctx_pad = len(ctx_toks) - N
     base_bpb = base_nll.mean() / math.log(2) / bpt
     base_bpb_q1 = base_nll[: N // 4].mean() / math.log(2) / bpt
     base_bpb_last = base_nll[N // 2 :].mean() / math.log(2) / bpt
-    print(f"\n=== BASELINE (frozen {CKPT}, {N:,} toks = {N * bpt / 1e6:.1f} MB) ===")
+    print(f"\n=== BASELINE (frozen {args.ckpt}, {N:,} toks = {N * bpt / 1e6:.1f} MB) ===")
     print(f"  Full stream bpb: {base_bpb:.4f} ({base_bpb * 125:.2f} MB equiv) | Q1: {base_bpb_q1:.4f} | 2nd half: {base_bpb_last:.4f}")
 
-    # --- Design 2: Exact S=1 Sparse Top-K Online Logit Bucket (C) ---
-    lib = compile_c_ext()
+    lib = compile_c_ext(args.cache_dir)
     print("\n=== DESIGN 2: SPARSE TOP-K ONLINE LOGIT BUCKET (EXACT S=1 TOKEN-BY-TOKEN IN C) ===")
     H_contig = np.ascontiguousarray(H)
     Z_c = np.ascontiguousarray(Z, dtype=np.float32)
@@ -549,19 +550,19 @@ def main():
     ctx_c = np.ascontiguousarray(ctx_toks, dtype=np.int16)
     out_nll = np.empty(N, dtype=np.float32)
 
-    # Sanity check: with lr=0, both Design 2 (C) and Design 1 (GPU) must match base_nll exactly!
     ord0 = np.array([1], dtype=np.int32)
     bit0 = np.array([14], dtype=np.int32)
     lr0 = np.array([0.0], dtype=np.float32)
+    n_chk = min(N, 65536)
     lib.run_sparse_bucket(
-        min(N, 65536), ctx_pad,
+        n_chk, ctx_pad, n_embd, n_match,
         ctx_c.ctypes.data, H_contig.ctypes.data, Z_c.ctypes.data,
         mp_c.ctypes.data, mb_c.ctypes.data, W_c.ctypes.data, b_c.ctypes.data,
         1, ord0.ctypes.data, bit0.ctypes.data, lr0.ctypes.data,
         8, 0.0, 0.0, 1.0, 1, out_nll.ctypes.data,
     )
-    err_c = float(np.abs(out_nll[:65536] - base_nll[:65536]).max())
-    print(f"  [Sanity check] C sparse-delta max NLL error at lr=0: {err_c:.6f} (mean {np.abs(out_nll[:65536]-base_nll[:65536]).mean():.6f})")
+    err_c = float(np.abs(out_nll[:n_chk] - base_nll[:n_chk]).max())
+    print(f"  [Sanity check] C sparse-delta max NLL error at lr=0: {err_c:.6f} (mean {np.abs(out_nll[:n_chk]-base_nll[:n_chk]).mean():.6f})")
     assert err_c < 1e-3, f"C reconstruction mismatch: {err_c}"
 
     configs_d2 = [
@@ -574,13 +575,13 @@ def main():
         ("6-ord (1..6)    23b K=8 fast-local",   [1, 2, 3, 4, 5, 6], [18, 22, 23, 23, 23, 23], [0.30, 0.80, 1.20, 1.60, 1.80, 2.00], 8, 0.002, 0.20, 1.0, 1),
     ]
     for name, orders, bits, lrs, K, dec, cpow, c0, utag in configs_d2:
-        ram_gb = sum((1 << b) * 52 for b in bits) / 1e9  # sizeof(Bucket) ~ 52B
+        ram_gb = sum((1 << b) * 52 for b in bits) / 1e9
         ord_a = np.array(orders, dtype=np.int32)
         bit_a = np.array(bits, dtype=np.int32)
         lr_a = np.array(lrs, dtype=np.float32)
         t0 = time.time()
         lib.run_sparse_bucket(
-            N, ctx_pad,
+            N, ctx_pad, n_embd, n_match,
             ctx_c.ctypes.data, H_contig.ctypes.data, Z_c.ctypes.data,
             mp_c.ctypes.data, mb_c.ctypes.data, W_c.ctypes.data, b_c.ctypes.data,
             len(orders), ord_a.ctypes.data, bit_a.ctypes.data, lr_a.ctypes.data,
@@ -592,11 +593,10 @@ def main():
         us_tok = dt / N * 1e6
         print(f"  {name:38s} | RAM={ram_gb:.2f}GB | {dt:5.1f}s ({us_tok:.2f}us/tok) | bpb={bpb_all:.4f} ({bpb_all-base_bpb:+.4f}, {(bpb_all-base_bpb)*125:+.2f}MB) | 2ndH={bpb_last:.4f} ({bpb_last-base_bpb_last:+.4f})")
 
-    # --- Design 1: Dense Low-Rank Online Engram-Head (GPU) ---
     print("\n=== DESIGN 1: DENSE ONLINE ENGRAM-HEAD (GPU, EXACT CLOSED-FORM GRAD) ===")
-    bpb0, _, _, _, nll0 = bench_design1_dense_engram(
-        H, Z, mp, mb, ctx_toks, W_eff, b_head, bpt,
-        orders=(1,), bits=(14,), dim=256, chunk_s=256, lr=0.0, decay=0.0,
+    bpb0, _, _, _, _ = bench_design1_dense_engram(
+        H, Z, mp, mb, ctx_toks, W_eff, b_head, bpt, n_match,
+        orders=(1,), bits=(14,), dim=n_embd, chunk_s=256, lr=0.0, decay=0.0,
     )
     print(f"  [Sanity check] GPU dense lr=0 bpb={bpb0:.5f} vs base={base_bpb:.5f} (diff={bpb0-base_bpb:+.5f})")
     for name, orders, bits, dim, chunk_s, lr, dec in [
@@ -607,7 +607,7 @@ def main():
         ("Dense d=256 (1,2,3,4) 19b S=16 lr=2.0", (1, 2, 3, 4), (16, 19, 19, 19), 256, 16, 2.0, 0.0),
     ]:
         bpb_all, bpb_last, ram_mb, dt, _ = bench_design1_dense_engram(
-            H, Z, mp, mb, ctx_toks, W_eff, b_head, bpt,
+            H, Z, mp, mb, ctx_toks, W_eff, b_head, bpt, n_match,
             orders=orders, bits=bits, dim=dim, chunk_s=chunk_s, lr=lr, decay=dec,
         )
         print(f"  {name:38s} | RAM={ram_mb/1000:.2f}GB | {dt:5.1f}s | bpb={bpb_all:.4f} ({bpb_all-base_bpb:+.4f}, {(bpb_all-base_bpb)*125:+.2f}MB) | 2ndH={bpb_last:.4f} ({bpb_last-base_bpb_last:+.4f})")

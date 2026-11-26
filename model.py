@@ -26,8 +26,18 @@ class GPTConfig:
     pass_adarms: bool = True   # per-pass AdaRMS scale+shift after norm(x) (replaces loop_emb)
     swa_window: int = 256      # local sliding-window size in tokens (0 disables SWA)
     swa_full_every: int = 4    # every Nth pass uses full causal attention
-    qat_group: int = 0         # symmetric 4-bit [-7, 7] STE QAT group size (0 disables QAT)
-    fp8: bool = True
+    xsa: bool = True           # Exclusive Self-Attention: project out self-v from attn output
+    n_experts: int = 0         # >0 enables DeepSeek-style Shared + Routed Fine-Grained MoE MLP
+    n_experts_active: int = 2  # top_k routed experts active per token
+    shared_h: int = 256        # shared SwiGLU expert hidden dim (0 disables shared expert)
+    expert_h: int = 256        # per-routed-expert SwiGLU hidden dim
+    engram_rows: int = 0       # >0 enables 4-head learned bigram+trigram Engram lookup table (rows per head)
+    engram_dim: int = 32       # embedding dim per hash head (4 heads -> 4*engram_dim total)
+    qat_group: int = 0         # symmetric per-group STE QAT group size (0 disables QAT)
+    qat_block_bits: int = 4    # bit width for dense attention / shared MLP weights
+    qat_expert_bits: int = 4   # bit width for routed MoE expert weights
+    qat_emb_bits: int = 6      # bit width for wte / lm_head weights (6 -> [-31, 31])
+    fp8: bool = False          # pure BF16 is faster and cleaner than FP8MM at d=256
     n_match: int = (
         0  # match feature columns (one per context length k, see matchfeat.py)
     )
@@ -45,17 +55,27 @@ def quant(t, dt):
     return (t.float() * s).clamp(-m, m).to(dt), s.reciprocal()
 
 
-def fake_quant_4bit(w, group_size=64):
-    """Per-group symmetric 4-bit [-7, 7] STE quantization with fp16 group scales.
-    Forward uses exact dequantized int4 + fp16-scale weights so archive export has 0.0 drop."""
-    if not group_size:
+def fake_quant(w, bits=4, group_size=64):
+    """Per-group symmetric N-bit STE quantization with fp16 group scales.
+    Forward uses exact dequantized intN + fp16-scale weights so archive export has 0.0 drop."""
+    if not group_size or not bits:
         return w
+    qmax = float((1 << (bits - 1)) - 1)
     orig_shape = w.shape
-    wg = w.float().reshape(-1, group_size)
-    scale = (wg.abs().amax(dim=-1, keepdim=True) / 7.0).clamp_min(1e-7).to(torch.float16).float()
-    q = (wg / scale).round().clamp(-7.0, 7.0)
-    wq = (q * scale).reshape(orig_shape).to(w.dtype)
+    wf = w.float().reshape(-1)
+    n = wf.numel()
+    rem = n % group_size
+    if rem:
+        wf = F.pad(wf, (0, group_size - rem))
+    wg = wf.reshape(-1, group_size)
+    scale = (wg.abs().amax(dim=-1, keepdim=True) / qmax).clamp_min(1e-7).to(torch.float16).float()
+    q = (wg / scale).round().clamp(-qmax, qmax)
+    wq = (q * scale).reshape(-1)[:n].reshape(orig_shape).to(w.dtype)
     return w + (wq - w).detach()
+
+
+def fake_quant_4bit(w, group_size=64):
+    return fake_quant(w, bits=4, group_size=group_size)
 
 
 class FP8MM(torch.autograd.Function):
@@ -84,23 +104,29 @@ class FP8MM(torch.autograd.Function):
 
 
 class FP8Linear(nn.Linear):
-    def __init__(self, in_features, out_features, qat_group=0):
+    def __init__(self, in_features, out_features, qat_group=0, qat_bits=4):
         super().__init__(in_features, out_features)
         self.qat_group = qat_group
+        self.qat_bits = qat_bits
 
     def forward(self, x):
-        w = fake_quant_4bit(self.weight, self.qat_group) if self.qat_group else self.weight
-        y = FP8MM.apply(x.reshape(-1, x.shape[-1]).to(torch.bfloat16), w)
+        if self.qat_group and self.qat_bits:
+            # During late-cooldown QAT, run exact BF16 matmul on exact dequantized weights
+            # (avoids extra per-tensor FP8 re-quantization noise on top of per-group IntN).
+            w = fake_quant(self.weight, self.qat_bits, self.qat_group)
+            return F.linear(x, w.to(x.dtype), self.bias.to(x.dtype))
+        y = FP8MM.apply(x.reshape(-1, x.shape[-1]).to(torch.bfloat16), self.weight)
         return y.view(*x.shape[:-1], -1) + self.bias.to(torch.bfloat16)
 
 
 class QATLinear(nn.Linear):
-    def __init__(self, in_features, out_features, qat_group=0):
+    def __init__(self, in_features, out_features, qat_group=0, qat_bits=4):
         super().__init__(in_features, out_features)
         self.qat_group = qat_group
+        self.qat_bits = qat_bits
 
     def forward(self, x):
-        w = fake_quant_4bit(self.weight, self.qat_group) if self.qat_group else self.weight
+        w = fake_quant(self.weight, self.qat_bits, self.qat_group) if (self.qat_group and self.qat_bits) else self.weight
         return F.linear(x, w.to(x.dtype), self.bias.to(x.dtype))
 
 
@@ -119,6 +145,139 @@ def rope(x, cos, sin):
     return torch.cat([out, x[..., rd:]], -1) if rd < x.shape[-1] else out
 
 
+class Engram(nn.Module):
+    """DeepSeek-Engram style multi-head learned N-gram (bigram + trigram) lookup table with
+    context-aware gating. Injected after block 0 so attention context suppresses hash collisions.
+    Costs <1% CPU FLOPs while adding millions of O(1) static memorization parameters."""
+
+    # Independent odd multipliers for 2-head bigram + 2-head trigram polynomial hashing
+    P1, M1 = 1000003, 0x9E3779B97F4A7C15
+    P2, M2 = 1000033, 0xBF58476D1CE4E5B9
+
+    def __init__(self, c):
+        super().__init__()
+        assert c.engram_rows > 0 and (c.engram_rows & (c.engram_rows - 1)) == 0, "engram_rows must be power of 2"
+        self.rows = c.engram_rows
+        self.mask = c.engram_rows - 1
+        self.dim = c.engram_dim
+        self.qat_group = c.qat_group
+        self.qat_bits = c.qat_expert_bits
+        # 4 tables: [bigram_h1, bigram_h2, trigram_h1, trigram_h2] packed as [4 * rows, dim]
+        self.table = nn.Parameter(torch.empty(4 * c.engram_rows, c.engram_dim))
+        nn.init.normal_(self.table, std=0.02)
+        in_d = 4 * c.engram_dim
+        self.key_proj = nn.Linear(in_d, c.n_embd, bias=False)
+        self.val_proj = nn.Linear(in_d, c.n_embd, bias=False)
+        nn.init.normal_(self.key_proj.weight, std=0.02)
+        self.val_proj.weight.data.zero_()  # start as exact identity
+        self.inv_sqrt_d = c.n_embd ** -0.5
+
+    def forward(self, idx, h):
+        # Strictly causal n-gram hashes from input tokens idx[:, :T]
+        t0 = idx.to(torch.int64)
+        t1 = F.pad(t0[:, :-1], (1, 0))
+        t2 = F.pad(t0[:, :-2], (2, 0))
+        m = self.mask
+        # Signed int64 wraparound hashing (matches C uint64 after & mask on right-shifted bits)
+        m1 = self.M1 - (1 << 64) if self.M1 >= (1 << 63) else self.M1
+        m2 = self.M2 - (1 << 64) if self.M2 >= (1 << 63) else self.M2
+        hb1 = (((t1 * self.P1 + t0) * m1) >> 32) & m
+        hb2 = ((((t1 * self.P2 + t0) * m2) >> 32) & m) + self.rows
+        ht1 = ((((t2 * self.P1 + t1) * self.P1 + t0) * m1) >> 32 & m) + 2 * self.rows
+        ht2 = ((((t2 * self.P2 + t1) * self.P2 + t0) * m2) >> 32 & m) + 3 * self.rows
+
+        tbl = fake_quant(self.table, self.qat_bits, self.qat_group) if (self.qat_group and self.qat_bits) else self.table
+        eb1 = F.embedding(hb1, tbl)
+        eb2 = F.embedding(hb2, tbl)
+        et1 = F.embedding(ht1, tbl)
+        et2 = F.embedding(ht2, tbl)
+        # Zero out incomplete prefix positions (t=0 for bigrams, t<2 for trigrams)
+        T = idx.shape[1]
+        pos = torch.arange(T, device=idx.device)[None, :, None]
+        m_bi = (pos >= 1).to(eb1.dtype)
+        m_tri = (pos >= 2).to(et1.dtype)
+        e = torch.cat([eb1 * m_bi, eb2 * m_bi, et1 * m_tri, et2 * m_tri], dim=-1).to(h.dtype)
+
+        ek = self.key_proj(e)
+        ev = self.val_proj(e)
+        # Context-aware collision-suppressing sigmoid gate
+        gate = torch.sigmoid((norm(h).float() * norm(ek).float()).sum(dim=-1, keepdim=True) * self.inv_sqrt_d).to(h.dtype)
+        return gate * ev
+
+
+class MoEMLP(nn.Module):
+    """DeepSeek-V3 style Shared + Fine-Grained Routed SwiGLU MoE using native torch._grouped_mm,
+    with auxiliary-loss-free bias load balancing and per-group STE QAT."""
+
+    def __init__(self, c, L):
+        super().__init__()
+        self.n_experts = c.n_experts
+        self.top_k = c.n_experts_active
+        self.expert_h = c.expert_h
+        self.qat_group = c.qat_group
+        self.qat_bits = c.qat_expert_bits
+
+        if c.shared_h > 0:
+            self.shared_fc = L(c.n_embd, 2 * c.shared_h)
+            self.shared_out = L(c.shared_h, c.n_embd)
+            self.shared_out.weight.data.zero_()
+        else:
+            self.shared_fc = None
+            self.shared_out = None
+
+        self.router = nn.Linear(c.n_embd, c.n_experts, bias=False)
+        nn.init.normal_(self.router.weight, std=0.02)
+        # Persistent load-balancing bias (32B/layer in fp16) + non-persistent step load counter
+        self.register_buffer("router_bias", torch.zeros(c.n_experts))
+        self.register_buffer("last_counts", torch.zeros(c.n_experts, dtype=torch.int64), persistent=False)
+
+        self.w_fc = nn.Parameter(torch.empty(c.n_experts, 2 * c.expert_h, c.n_embd))
+        self.w_out = nn.Parameter(torch.zeros(c.n_experts, c.n_embd, c.expert_h))
+        bound = c.n_embd ** -0.5
+        nn.init.uniform_(self.w_fc, -bound, bound)
+
+    def forward(self, m):
+        B, T, C = m.shape
+        y_shared = None
+        if self.shared_fc is not None:
+            sg, su = self.shared_fc(m).chunk(2, dim=-1)
+            y_shared = self.shared_out(F.silu(sg) * su)
+
+        x_flat = m.reshape(-1, C)  # [N, C]
+        scores = torch.sigmoid(self.router(x_flat).float())  # [N, E]
+        sel_scores = scores + self.router_bias.unsqueeze(0)
+        _, top_idx = sel_scores.topk(self.top_k, dim=-1)  # [N, K]
+        top_w = scores.gather(-1, top_idx)
+        top_w = (top_w / top_w.sum(dim=-1, keepdim=True).clamp_min(1e-6)).to(m.dtype)
+
+        flat_e = top_idx.reshape(-1)  # [N*K]
+        order = flat_e.argsort(stable=False)
+        sorted_e = flat_e[order]
+        tok_ids = order // self.top_k
+        sorted_x = x_flat[tok_ids]
+
+        # Pure-GPU expert histogram (avoids bincount host sync)
+        counts = torch.zeros(self.n_experts, dtype=torch.int32, device=m.device)
+        counts.scatter_add_(0, sorted_e, torch.ones_like(sorted_e, dtype=torch.int32))
+        offs = counts.cumsum(0, dtype=torch.int32)
+        if self.training:
+            self.last_counts.add_(counts.to(torch.int64))
+
+        w_fc = fake_quant(self.w_fc, self.qat_bits, self.qat_group) if (self.qat_group and self.qat_bits) else self.w_fc
+        w_out = fake_quant(self.w_out, self.qat_bits, self.qat_group) if (self.qat_group and self.qat_bits) else self.w_out
+
+        # _grouped_mm requires explicit bf16/fp16 (not auto-cast by torch.autocast)
+        mm_dt = torch.bfloat16 if m.is_cuda else m.dtype
+        h = torch._grouped_mm(sorted_x.to(mm_dt), w_fc.to(mm_dt).transpose(-1, -2), offs=offs)
+        g, u = h.chunk(2, dim=-1)
+        y_sorted = torch._grouped_mm((F.silu(g) * u).to(mm_dt), w_out.to(mm_dt).transpose(-1, -2), offs=offs)
+
+        y_routed = torch.zeros(x_flat.shape, dtype=mm_dt, device=m.device)
+        y_routed.index_add_(0, tok_ids, y_sorted * top_w.reshape(-1, 1)[order].to(mm_dt))
+        y_routed = y_routed.view(B, T, C).to(m.dtype)
+        return (y_shared + y_routed) if y_shared is not None else y_routed
+
+
 class Block(nn.Module):
     def __init__(self, c):
         super().__init__()
@@ -126,7 +285,11 @@ class Block(nn.Module):
         self.c = c
         self.head_dim = c.n_embd // c.n_head
         self.kv_dim = c.n_kv_head * self.head_dim
-        L = (lambda i, o: FP8Linear(i, o, c.qat_group)) if c.fp8 else (lambda i, o: QATLinear(i, o, c.qat_group))
+        L = (
+            (lambda i, o: FP8Linear(i, o, c.qat_group, c.qat_block_bits))
+            if c.fp8
+            else (lambda i, o: QATLinear(i, o, c.qat_group, c.qat_block_bits))
+        )
         if c.conv_k > 1:
             self.conv = nn.Conv1d(c.n_embd, c.n_embd, c.conv_k, groups=c.n_embd)
             self.conv.weight.data.zero_()
@@ -141,15 +304,21 @@ class Block(nn.Module):
         else:
             self.attn_gate = None
         self.proj = L(c.n_embd, c.n_embd)
-        if c.swiglu:
-            mlp_h = ((int(8 * c.n_embd / 3) + 63) // 64) * 64  # 704 for n_embd=256 (~same params as 4*C)
-            self.fc = L(c.n_embd, 2 * mlp_h)
-            self.out = L(mlp_h, c.n_embd)
-        else:
-            self.fc = L(c.n_embd, 4 * c.n_embd)
-            self.out = L(4 * c.n_embd, c.n_embd)
         self.proj.weight.data.zero_()
-        self.out.weight.data.zero_()
+        if c.n_experts > 0:
+            self.moe = MoEMLP(c, L)
+            self.fc = None
+            self.out = None
+        else:
+            self.moe = None
+            if c.swiglu:
+                mlp_h = ((int(8 * c.n_embd / 3) + 63) // 64) * 64  # 704 for n_embd=256 (~same params as 4*C)
+                self.fc = L(c.n_embd, 2 * mlp_h)
+                self.out = L(mlp_h, c.n_embd)
+            else:
+                self.fc = L(c.n_embd, 4 * c.n_embd)
+                self.out = L(4 * c.n_embd, c.n_embd)
+            self.out.weight.data.zero_()
         self.scale = (2 * GPT.num_passes(c)) ** -0.5
 
     def forward(
@@ -192,6 +361,11 @@ class Block(nn.Module):
         else:
             y = F.scaled_dot_product_attention(qt, kt, vt, is_causal=True, enable_gqa=gqa)
         yt = y.transpose(1, 2)
+        if self.c.xsa:
+            # Exclusive Self-Attention: project out each token's own v direction
+            v_e = v.repeat_interleave(self.c.n_head // self.c.n_kv_head, dim=2) if gqa else v
+            vn = F.normalize(v_e.float(), dim=-1, eps=1e-6).to(yt.dtype)
+            yt = yt - (yt * vn).sum(dim=-1, keepdim=True) * vn
         if self.attn_gate is not None:
             gate = 2.0 * torch.sigmoid(self.attn_gate(h).to(yt.dtype))
             yt = yt * gate.unsqueeze(-1)
@@ -199,7 +373,9 @@ class Block(nn.Module):
         m = norm(x)
         if mlp_scale is not None:
             m = m * (1.0 + mlp_scale.to(m.dtype)) + mlp_shift.to(m.dtype)
-        if self.c.swiglu:
+        if self.moe is not None:
+            x = x + self.scale * self.moe(m)
+        elif self.c.swiglu:
             g, u = self.fc(m).chunk(2, dim=-1)
             x = x + self.scale * self.out(F.silu(g) * u)
         else:
@@ -218,7 +394,12 @@ class GPT(nn.Module):
     def __init__(self, c=GPTConfig()):
         super().__init__()
         self.c = c
+        self.qat_group = c.qat_group
+        self.qat_block_bits = c.qat_block_bits
+        self.qat_expert_bits = c.qat_expert_bits
+        self.qat_emb_bits = c.qat_emb_bits
         self.wte = nn.Embedding(c.vocab_size, c.n_embd)
+        self.engram = Engram(c) if c.engram_rows > 0 else None
         self.h = nn.ModuleList(Block(c) for _ in range(c.n_layer))
         self.lm_head = nn.Linear(c.n_embd, c.vocab_size)
         if c.tie_weights:
@@ -333,11 +514,54 @@ class GPT(nn.Module):
             skips.append(x)
         return x, v0
 
-    def forward(self, idx, mpred=None, mcode=None):
+    def set_qat(self, group_size=64, block_bits=None, emb_bits=None, expert_bits=None):
+        """Enable/update mixed-precision per-group STE QAT dynamically (e.g. for late cooldown)."""
+        self.qat_group = int(group_size)
+        if block_bits is not None:
+            self.qat_block_bits = int(block_bits)
+        if emb_bits is not None:
+            self.qat_emb_bits = int(emb_bits)
+        if expert_bits is not None:
+            self.qat_expert_bits = int(expert_bits)
+        for m in self.h.modules():
+            if isinstance(m, (FP8Linear, QATLinear)):
+                m.qat_group = self.qat_group
+                m.qat_bits = self.qat_block_bits
+            elif isinstance(m, MoEMLP):
+                m.qat_group = self.qat_group
+                m.qat_bits = self.qat_expert_bits
+        if self.engram is not None:
+            self.engram.qat_group = self.qat_group
+            self.engram.qat_bits = self.qat_expert_bits
+
+    @torch.no_grad()
+    def update_router_biases(self, gamma=1e-3, clamp=4.0):
+        """DeepSeek-V3 auxiliary-loss-free load balancing update across all MoE layers.
+        Returns max(expert_load / mean_load) across layers for monitoring."""
+        max_ratio = 1.0
+        for b in self.h:
+            if b.moe is not None:
+                cnt = b.moe.last_counts.float()
+                tot = cnt.sum()
+                if tot > 0:
+                    target = tot / b.moe.n_experts
+                    err = target - cnt
+                    b.moe.router_bias.add_(err.sign() * gamma).clamp_(-clamp, clamp)
+                    ratio = (cnt.max() / target).item()
+                    if ratio > max_ratio:
+                        max_ratio = ratio
+                b.moe.last_counts.zero_()
+        return max_ratio
+
+    def forward(self, idx, mpred=None, mcode=None, return_features=False):
         """mpred, mcode: [B, T, n_match] match features for the byte AFTER each input position
         (the one this position predicts)."""
         T = idx.shape[1]
-        wte = fake_quant_4bit(self.wte.weight, self.c.qat_group) if self.c.qat_group else self.wte.weight
+        wte = (
+            fake_quant(self.wte.weight, self.qat_emb_bits, self.qat_group)
+            if (self.qat_group and self.qat_emb_bits)
+            else self.wte.weight
+        )
         x = F.embedding(idx, wte)
         if self.n_match:
             mp, ml = mpred.long(), mcode.long()
@@ -375,6 +599,8 @@ class GPT(nn.Module):
         if self.c.n_loop > 1 and self.c.n_layer > 2:
             # Prelude (h[0]) -> Core (h[1:-1]) x n_loop -> Coda (h[-1])
             x, v0 = self._run_block(self.h[0], p, x, x0, v0, cos, sin, swa_bm, swa_dm, skips)
+            if self.engram is not None:
+                x = x + self.engram(idx, x)
             p += 1
             for loop in range(self.c.n_loop):
                 if self.loop_emb is not None:
@@ -389,14 +615,19 @@ class GPT(nn.Module):
                     x = x + self.loop_emb[loop].to(x.dtype)
                 for b in self.h:
                     x, v0 = self._run_block(b, p, x, x0, v0, cos, sin, swa_bm, swa_dm, skips)
+                    if p == 0 and self.engram is not None:
+                        x = x + self.engram(idx, x)
                     p += 1
         head_w = wte if self.c.tie_weights else (
-            fake_quant_4bit(self.lm_head.weight, self.c.qat_group) if self.c.qat_group else self.lm_head.weight
+            fake_quant(self.lm_head.weight, self.qat_emb_bits, self.qat_group)
+            if (self.qat_group and self.qat_emb_bits)
+            else self.lm_head.weight
         )
         hn = norm(x)
         logits = F.linear(hn, head_w.to(x.dtype), self.lm_head.bias.to(x.dtype))
         if self.logit_scale is not None:
             logits = logits * self.logit_scale.to(logits.dtype)
+        bonus = None
         if self.n_match:
             ctx_gate = self.match_ctx(hn).to(logits.dtype)
             mod = F.softplus(
@@ -413,42 +644,119 @@ class GPT(nn.Module):
                 + self.match_miss_bias.to(logits.dtype) * prev_miss.to(logits.dtype)
             ) * has.to(logits.dtype)
             logits = logits.scatter_add(-1, mp, bonus)
+        if return_features:
+            return logits, hn, bonus
         return logits
 
 
-@torch.no_grad()
-def quantize_4bit_stats(model):
-    """Estimate raw packed and entropy-coded archive size for 4-bit QAT weights + fp16 misc params."""
-    gs = model.c.qat_group or 64
-    q_weights = [model.wte.weight]
-    if not model.c.tie_weights:
-        q_weights.append(model.lm_head.weight)
-    q_weights += [m.weight for m in model.h.modules() if isinstance(m, (FP8Linear, QATLinear))]
-    q_ids = {id(p) for p in q_weights}
-    other = [p for p in model.parameters() if id(p) not in q_ids]
-
+def _quant_group_stats(weights, bits, gs):
+    if not weights:
+        return dict(params=0, bpw=0.0, raw_bytes=0, ent_bytes=0)
+    qmax = (1 << (bits - 1)) - 1
     q_all = []
     scale_bytes = 0
-    for w in q_weights:
-        wg = w.detach().float().reshape(-1, gs)
-        s = (wg.abs().amax(dim=-1, keepdim=True) / 7.0).clamp_min(1e-7).to(torch.float16)
-        q = (wg / s.float()).round().clamp(-7, 7).to(torch.int8).cpu().numpy().ravel()
+    total_params = 0
+    for w in weights:
+        wf = w.detach().float().reshape(-1)
+        n = wf.numel()
+        total_params += n
+        rem = n % gs
+        if rem:
+            wf = F.pad(wf, (0, gs - rem))
+        wg = wf.reshape(-1, gs)
+        s = (wg.abs().amax(dim=-1, keepdim=True) / float(qmax)).clamp_min(1e-7).to(torch.float16)
+        q = (wg / s.float()).round().clamp(-qmax, qmax).to(torch.int16).cpu().numpy().ravel()[:n]
         q_all.append(q)
         scale_bytes += s.numel() * 2
     q_cat = np.concatenate(q_all)
-    # Shannon entropy of the 15-level int4 symbols (achievable with an arithmetic coder)
     _, counts = np.unique(q_cat, return_counts=True)
     probs = counts / counts.sum()
     h_bits = float(-(probs * np.log2(probs)).sum())
-    raw_q_bytes = (len(q_cat) + 1) // 2 + scale_bytes
-    ent_q_bytes = int(math.ceil(len(q_cat) * h_bits / 8.0)) + scale_bytes
-    other_fp16 = b"".join(p.detach().to(torch.float16).cpu().numpy().tobytes() for p in other)
+    raw_bytes = int(math.ceil(len(q_cat) * bits / 8.0)) + scale_bytes
+    ent_bytes = int(math.ceil(len(q_cat) * h_bits / 8.0)) + scale_bytes
+    return dict(params=int(total_params), bpw=h_bits, raw_bytes=raw_bytes, ent_bytes=ent_bytes)
+
+
+@torch.no_grad()
+def quantize_stats(model, block_bits=None, emb_bits=None, expert_bits=None, group_size=None):
+    """Estimate raw packed and entropy-coded archive size for 3-tier mixed-precision weights + fp16 misc."""
+    gs = group_size or model.qat_group or model.c.qat_group or 64
+    b_bits = block_bits if block_bits is not None else (model.qat_block_bits or model.c.qat_block_bits or 4)
+    e_bits = emb_bits if emb_bits is not None else (model.qat_emb_bits or model.c.qat_emb_bits or 6)
+    x_bits = expert_bits if expert_bits is not None else (model.qat_expert_bits or model.c.qat_expert_bits or 4)
+    emb_weights = [model.wte.weight]
+    if not model.c.tie_weights:
+        emb_weights.append(model.lm_head.weight)
+    block_weights = [m.weight for m in model.h.modules() if isinstance(m, (FP8Linear, QATLinear))]
+    expert_weights = []
+    for m in model.h.modules():
+        if isinstance(m, MoEMLP):
+            expert_weights.extend([m.w_fc, m.w_out])
+    if model.engram is not None:
+        expert_weights.append(model.engram.table)
+    q_ids = {id(p) for p in emb_weights + block_weights + expert_weights}
+    other = [p for p in model.parameters() if id(p) not in q_ids]
+    other_bufs = [b.moe.router_bias for b in model.h if b.moe is not None]
+
+    es = _quant_group_stats(emb_weights, e_bits, gs)
+    bs = _quant_group_stats(block_weights, b_bits, gs)
+    xs = _quant_group_stats(expert_weights, x_bits, gs)
+    other_fp16 = b"".join(p.detach().to(torch.float16).cpu().numpy().tobytes() for p in (other + other_bufs))
     other_raw = len(other_fp16)
     other_zlib = len(zlib.compress(other_fp16, 9))
+    q_params = es["params"] + bs["params"] + xs["params"]
+    avg_bpw = (es["params"] * es["bpw"] + bs["params"] * bs["bpw"] + xs["params"] * xs["bpw"]) / max(q_params, 1)
     return dict(
-        q_params=int(len(q_cat)),
-        other_params=sum(p.numel() for p in other),
-        bits_per_qweight=h_bits,
-        raw_mb=(raw_q_bytes + other_raw) / 1e6,
-        entropy_mb=(ent_q_bytes + other_zlib) / 1e6,
+        q_params=q_params,
+        emb_params=es["params"],
+        block_params=bs["params"],
+        expert_params=xs["params"],
+        other_params=sum(p.numel() for p in other) + sum(b.numel() for b in other_bufs),
+        emb_bits=e_bits,
+        block_bits=b_bits,
+        expert_bits=x_bits,
+        group_size=gs,
+        emb_bpw=es["bpw"],
+        block_bpw=bs["bpw"],
+        expert_bpw=xs["bpw"],
+        bits_per_qweight=avg_bpw,
+        emb_entropy_mb=es["ent_bytes"] / 1e6,
+        block_entropy_mb=bs["ent_bytes"] / 1e6,
+        expert_entropy_mb=xs["ent_bytes"] / 1e6,
+        other_zlib_mb=other_zlib / 1e6,
+        raw_mb=(es["raw_bytes"] + bs["raw_bytes"] + xs["raw_bytes"] + other_raw) / 1e6,
+        entropy_mb=(es["ent_bytes"] + bs["ent_bytes"] + xs["ent_bytes"] + other_zlib) / 1e6,
     )
+
+
+def quantize_4bit_stats(model):
+    return quantize_stats(model, block_bits=4, emb_bits=4, expert_bits=4, group_size=model.qat_group or model.c.qat_group or 64)
+
+
+@torch.no_grad()
+def quantize_model_copy(model, block_bits=None, emb_bits=None, expert_bits=None, group_size=None):
+    """Return an eval copy of `model` with exact archive-precision weights:
+    per-group Int{emb_bits} embeddings, Int{block_bits} dense linears, Int{expert_bits} MoE experts, and fp16 misc."""
+    import copy
+    gs = group_size or model.qat_group or model.c.qat_group or 64
+    b_bits = block_bits if block_bits is not None else (model.qat_block_bits or model.c.qat_block_bits or 4)
+    e_bits = emb_bits if emb_bits is not None else (model.qat_emb_bits or model.c.qat_emb_bits or 6)
+    x_bits = expert_bits if expert_bits is not None else (model.qat_expert_bits or model.c.qat_expert_bits or 4)
+    qm = copy.deepcopy(model).eval().requires_grad_(False)
+    qm.set_qat(group_size=gs, block_bits=b_bits, emb_bits=e_bits, expert_bits=x_bits)
+    q_ids = {id(qm.wte.weight)}
+    if not qm.c.tie_weights:
+        q_ids.add(id(qm.lm_head.weight))
+    for m in qm.h.modules():
+        if isinstance(m, (FP8Linear, QATLinear)):
+            q_ids.add(id(m.weight))
+        elif isinstance(m, MoEMLP):
+            q_ids.add(id(m.w_fc))
+            q_ids.add(id(m.w_out))
+            m.router_bias.copy_(m.router_bias.to(torch.float16).to(m.router_bias.dtype))
+    if qm.engram is not None:
+        q_ids.add(id(qm.engram.table))
+    for p in qm.parameters():
+        if id(p) not in q_ids:
+            p.copy_(p.to(torch.float16).to(p.dtype))
+    return qm
