@@ -20,10 +20,21 @@ RUN_NAME = os.environ.get("RUN_NAME", "") or None
 OUT_DIR = os.environ.get("OUT_DIR", ".")
 COMPILE_MODE = os.environ.get("COMPILE_MODE", "max-autotune")
 os.makedirs(OUT_DIR, exist_ok=True)
-LR_MUON, LR_WTE, LR_HEAD, LR_CONV, LR_SCALAR, LR_BIAS = 0.015, 0.005, 0.001818, 0.003, 0.003, 0.0209
+LR_SCALE = float(os.environ.get("LR_SCALE", "1.0"))
+LR_MUON, LR_WTE, LR_HEAD, LR_CONV, LR_SCALAR, LR_BIAS = (
+    0.015 * LR_SCALE,
+    0.005 * LR_SCALE,
+    0.001818 * LR_SCALE,
+    0.003 * LR_SCALE,
+    0.003 * LR_SCALE,
+    0.0209 * LR_SCALE,
+)
 WD_MUON, WD_ADAM = 0.005, 0.005
+L1_EXPERT = float(os.environ.get("L1_EXPERT", "0.0"))
+L1_BLOCK = float(os.environ.get("L1_BLOCK", "0.0"))
 MUON_MOM_MIN, MUON_MOM_MAX, MUON_MOM_WARMUP = 0.85, 0.95, 300
-WARMUP, COOLDOWN = 0, 0.50
+WARMUP = int(os.environ.get("WARMUP", "0"))
+COOLDOWN = float(os.environ.get("COOLDOWN", "0.50"))
 # Late-cooldown mixed-precision QAT:
 # Train in BF16 during main training, then turn on STE QAT only in the final (1 - QAT_START) of steps
 # (Int6 for tied wte/lm_head, Int5/Int4 for dense blocks, Int4/Int3 for routed MoE experts).
@@ -49,8 +60,8 @@ if N_EXPERTS > 0 and "COMPILE_MODE" not in os.environ:
 # Optional checkpointing:
 # - INIT_FROM: load model weights (and seed EMA from them) for a fresh schedule / cooldown / QAT branch
 # - RESUME: resume full state (model, ema, optimizers, step, RNG) from a saved ckpt.pt
-INIT_FROM = None
-RESUME = None
+INIT_FROM = os.environ.get("INIT_FROM", "") or None
+RESUME = os.environ.get("RESUME", "") or None
 # EMA of all weights, updated after every optimizer step (decay warms up as (1+t)/(10+t));
 # None disables. Every CKPT steps we run the full strided Hutter-MB eval suite.
 EMA_DECAY = 0.999
@@ -361,6 +372,7 @@ wandb.init(
         ACCUM=ACCUM,
         T=T,
         STEPS=STEPS,
+        LR_SCALE=LR_SCALE,
         LR_MUON=LR_MUON,
         LR_WTE=LR_WTE,
         LR_HEAD=LR_HEAD,
@@ -369,6 +381,8 @@ wandb.init(
         LR_BIAS=LR_BIAS,
         WD_MUON=WD_MUON,
         WD_ADAM=WD_ADAM,
+        L1_EXPERT=L1_EXPERT,
+        L1_BLOCK=L1_BLOCK,
         MUON_MOM_MIN=MUON_MOM_MIN,
         MUON_MOM_MAX=MUON_MOM_MAX,
         MUON_MOM_WARMUP=MUON_MOM_WARMUP,
@@ -426,6 +440,9 @@ if INIT_FROM or RESUME:
 log = open(os.path.join(OUT_DIR, "log.csv"), "a" if RESUME else "w", buffering=1)
 if not RESUME:
     log.write("step,loss,bpb,bytes,ms_per_step\n")
+exp_ps = [p for m in moes for p in (m.w_fc, m.w_out)]
+blk_ps = [m.weight for m in lin]
+best_hutter_mb = float("inf")
 t0 = time.time()
 for step in range(start_step, STEPS):
     if qat_step is not None and not qat_active and step >= qat_step:
@@ -453,6 +470,16 @@ for step in range(start_step, STEPS):
         for g in o.param_groups:
             g["lr"] = g["initial_lr"] * lrm
         o.step()
+    if L1_EXPERT > 0 and exp_ps:
+        tau = LR_MUON * lrm * L1_EXPERT
+        with torch.no_grad():
+            for p in exp_ps:
+                p.copy_(p.sign() * (p.abs() - tau).clamp_min(0.0))
+    if L1_BLOCK > 0 and blk_ps:
+        tau_b = LR_MUON * lrm * L1_BLOCK
+        with torch.no_grad():
+            for p in blk_ps:
+                p.copy_(p.sign() * (p.abs() - tau_b).clamp_min(0.0))
     model.zero_grad(set_to_none=True)
     moe_max_load = model.update_router_biases() if cfg.n_experts > 0 else 1.0
     if ema is not None:
@@ -500,12 +527,17 @@ for step in range(start_step, STEPS):
             f"step {step + 1} | eval_bpb {ev['eval_bpb']:.4f}"
             + (f" | ema_eval_bpb {ev['ema_eval_bpb']:.4f} | ema_strided {ev['ema_strided_bpb']:.4f}" if ema is not None else f" | strided {ev['strided_bpb']:.4f}")
             + f" | q_strided {ev['q_strided_bpb']:.4f} ({ev['q_drop_bpb']:+.4f})"
-            + f" | wt {ev['weight_mb']:.2f}MB | HUTTER {ev['hutter_mb']:.2f} MB"
+            + f" | wt {ev['weight_mb']:.2f}MB"
+            + (f" (exp {ev['expert_bpw']:.2f}bpw)" if "expert_bpw" in ev else "")
+            + f" | HUTTER {ev['hutter_mb']:.2f} MB"
         )
         wandb.log(ev, step=step + 1)
         torch.save(model.state_dict(), os.path.join(OUT_DIR, "model.pt"))
         if ema is not None:
             torch.save(ema.state_dict(), os.path.join(OUT_DIR, "model_ema.pt"))
+        if ev["hutter_mb"] < best_hutter_mb:
+            best_hutter_mb = ev["hutter_mb"]
+            torch.save((ema if ema is not None else model).state_dict(), os.path.join(OUT_DIR, "model_best.pt"))
         torch.save(
             dict(
                 step=step + 1,

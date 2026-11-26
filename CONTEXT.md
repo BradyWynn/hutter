@@ -41,6 +41,7 @@ $$\text{hutter\_mb} = \underbrace{\text{q\_strided\_bpb} \times 125.0}_{\text{Pa
 - `muon.py` — NorMuon + cautious WD + **5-step Polar Express** orthogonalization + 0-D GPU tensor `beta` (dynamic momentum with zero `torch.compile` recompiles) + native 3D `[E, M, N]` MoE expert stack support.
 - `train.py` — Training loop with env-var overrides (`DATA`, `MATCH_K`, `N_LAYER`, `N_LOOP`, `N_EXPERTS`, `TOP_K`, `SHARED_H`, `EXPERT_H`, `QAT_START`, `QAT_EMB_BITS`, `QAT_BLOCK_BITS`, `QAT_EXPERT_BITS`, `STEPS`, `CKPT`, `EVAL_WINDOWS`, `FP8`, `RUN_NAME`, `OUT_DIR`, `COMPILE_MODE`), WSD schedule (`COOLDOWN=0.50`), Muon momentum schedule (`0.85 → 0.95 → 0.85`), aux-loss-free `update_router_biases()`, late-cooldown QAT (separate compiled graph `loss_fn_qat`), and full `eval_hutter_suite` logging.
 - `eval_hutter.py` — Standalone + importable strided full-context Hutter-MB evaluator (`python eval_hutter.py <ckpt> --data enwik9.split4096 --windows 2048`).
+- `ecqat.py` — **Exact 1:1 Hutter MDL Rate-Distortion QAT (`CE + (1/N_tok) · Rate_nats`)** with learnable per-row step sizes `Δ` (LSQ STE) + Ballé Laplace CDF entropy model + AdamW. Shaved **`-0.96 MB` net** (`104.35 → 103.39 MB`) off `v10-moe17m-100k` in 15k steps (~25 min)!
 - `bpe_tok.py` — Byte-level BPE tokenizer (`split` trains on full 1 GB in ~55s; `nosplit` uses 4 KB newline chunks).
 - `matchfeat.py` — GPU-built causal 64-bit FNV polynomial hash match tables (`TABLE_BITS=26`, `MATCH_K=(2,3,5,8,13,27)` for `split4096`), cached as disk memmaps.
 - `online_hash_bench.py` — Updated to v8/v9 `GPT` (`return_features=True`), dynamic `D`/`n_match=6` C sparse-bucket kernel + GPU dense-engram benchmark.
@@ -67,34 +68,35 @@ $$\text{hutter\_mb} = \underbrace{\text{q\_strided\_bpb} \times 125.0}_{\text{Pa
 | **Bolted-on online n-gram hash tables** (`online_hash_bench.py` on `v9_split4096_20k`, first `8.39M` toks) | **`-0.30 MB` max** (Design 2 C sparse `lr=0.25`); **`-0.17 MB`** (Design 1 dense `lr=0.5`); all higher LRs hurt | End-to-end 6-col context-gated `matchfeat` already captures almost all exact n-gram repetition; unlearned additive hash deltas overlap with it and hurt calibration at higher LRs. |
 | **Naive semantic page reordering** (`reorder_enwik9.py`, `6cf4mt2j`, 192-dim GPU SVD + K-Means/TSP, `0.50 MB` Lehmer perm) | **`+0.45 MB` net** (`112.34` vs `111.89 MB` on **2048-win**: payload `-0.05` to `-0.42 MB` gross, perm `+0.50 MB`) | Three reasons: (1) Static model with no online learning only sees ~5.8 KB in `T=2048`; (2) Original `enwik9` already has strong creation-order locality (`adj_cos = 0.308`); (3) Permuting pages scrambles strictly monotonic `<page><id>` numbers, costing `~0.5 MB` inside XML `<id>` tags. Only worth revisiting *with* `starlit`-style XML `<id>` delta-encoding + online adaptation. |
 | **Learned N-Gram Engram Table** (`v10-moe17m-engram8m-20k`, 4-head bigram+trigram `65536×32` = `+8.45M` params, context-gated after Block 0) | **`+2.82 MB` worse** at step 12k (`117.41` vs `114.59 MB`; killed early) | Saved only **`-1.20 MB`** payload (`-0.0096 bpb`) at **`+4.05 MB`** Int4 weight cost (**`0.30 MB/MB`** efficiency vs **`1.5+ MB/MB`** for MoE experts!). Static n-gram lookup tables are ~5× less byte-efficient than contextual MoE MLP experts when `conv_k=4` + 6-col `matchfeat` are already present. |
+| **Uncompressed 4-bit `v10-moe30m-20k`** (`e35p7fag`, `L=8×1`, `1s256 + 16r256`, `29.44M` params, `6/5/4`-bit) | **`+2.99 MB` worse** at 20k (`114.16` vs `111.17 MB`), **but `99.51 MB` payload!** (`-2.93 MB` payload vs `17M-20k`) | At uncompressed `3.49 bpw` Int4 (`14.60 MB` weights, `+5.93 MB` over `17M`), doubling `E: 8→16` returned `0.49 MB/MB` at 20k — pinning the **4-bit MDL knee right around `12M–20M` params (`v10-moe17m`)**. Only pays off if routed experts are compressed tighter OR used as a fast **0-archive-byte offline teacher** (`99.5 MB` payload in just 44 min!). |
+| **Uniform Proximal-L1 QAT** (`v10-moe17m-l1qat-15k`, `9hpo881z`, `L1_EXPERT=0.010` off `104.35 MB` ckpt) | **`+2.70 MB` worse** (`107.05` vs `104.35 MB`) | Cut expert weights `-1.28 MB` (`3.49 → 2.68 bpw`, `8.67 → 7.39 MB`), **but cost `+3.98 MB` payload** (`0.7649 → 0.7968`, **`3.11 MB` payload lost per `1 MB` saved**!). Proves `6/5/4` on `v10-moe17m` is already tightly packed (no free uniform-L1 slack); any further weight compression must be **exact rate-distortion ECQAT** (`CE + (ln 2 / N_tok) * H(q)` with learnable per-row/layer `Δ` + AdamW), not blunt uniform L1. |
 
 ### Recent Checkpoints on Disk
 - `runs/v9_split4096_20k/` (`nb76hzxp`): 20k `split4096` v9 (`111.89 MB` on 2048-win).
 - `runs/v9_split4096_100k/` (`vcm3zsc0`): 100k pure-BF16 v9 anchor (`6.27M` params, `12` looped passes, `83.5 ms/step`, `2.65h`). Final 2048-win: `q_strided=0.8300` (`103.75 MB` payload) + `wt=3.29 MB` = **`107.10 MB`**.
 - `runs/v10_moe17m_20k/` (`fhm2rmi4`): 20k unlooped MoE (`16.85M` params, `L=8×1`, `1s256 + 8r256`, `top_k=2`, `0.72×` active CPU MACs of v9, `6/5/4`-bit QAT). Final 2048-win: `q_strided=0.8195` + `wt=8.67 MB` = **`111.17 MB`** (`-0.72 MB` ahead of `v9-20k`).
-- `runs/v10_moe17m_100k/` (`k428b6dj`, **NEW BEST — 3.93 MB FROM HUTTER #1!**): 100k unlooped MoE (`16.85M` params, `L=8×1`, `1s256 + 8r256`, `top_k=2`, `0.72×` CPU MACs, `6/5/4`-bit QAT at `85k–100k`, `~101 ms/step`, `3.17h`).
-  - Step 85k (pre-QAT BF16): `ema_eval_bpb=0.7776`, `ema_strided=0.7650` (`95.63 MB` payload), PTQ `q_strided=0.7778` (`+0.0128` drop, less than half of v9's `+0.0291`), `HUTTER=105.95 MB`.
-  - **Step 100k (final quantized, 2048-win):** `eval_bpb=0.7778`, `ema_eval_bpb=0.7777` (vs `rich-voice-20`'s `0.8306`!), **`q_strided=0.7649` (`95.62 MB` payload, `q_drop=0.0000`)**, `wt=8.67 MB` (`emb 5.65 bpw`, `blk 4.55 bpw`, `exp 3.49 bpw`), **`HUTTER=104.35 MB`** — **beats `tufazip v2` (`105.39 MB`) by `-1.04 MB`, beats `v9-100k` (`107.10 MB`) by `-2.75 MB`, and was still dropping `-0.20 MB` every 2.5k steps at step 100k!**
+- `runs/v10_moe17m_100k/` (`k428b6dj`): 100k unlooped MoE (`16.85M` params, `L=8×1`, `1s256 + 8r256`, `top_k=2`, `0.72×` CPU MACs, `6/5/4`-bit QAT at `85k–100k`, `~101 ms/step`, `3.17h`). Final 2048-win: `q_strided=0.7649` (`95.62 MB` payload) + `wt=8.67 MB` = **`104.35 MB`**.
+- `runs/v10_moe17m_ecqat_15k/` (`ps6lfi2s`, **NEW ALL-TIME BEST — 2.97 MB FROM HUTTER #1!**): 15k exact 1:1 MDL ECQAT (`ecqat.py`, `RATE_MULT=1.0`, AdamW, per-row `Δ` + Laplace CDF) branched from `v10_moe17m_100k/model_ema.pt` (~25 min).
+  - **Final 2048-win:** `q_strided=0.7665` (`95.81 MB` payload, only `+0.19 MB`) + **`wt=7.52 MB`** (`-1.15 MB` weights! `scales 0.13 MB`) = **`103.39 MB`** (**`-0.96 MB` net win**, `2.00 MB` ahead of `tufazip v2`, still dropping at step 15k!).
+  - **Learned precision hierarchy:** `wte 4.96 bpw`, attention `proj 4.75 bpw` (`4.25–5.12`), shared `sout 3.77`, `qkv 3.72`, `sfc 3.56`, routed `eout 3.38`, routed `efc 3.10 bpw` (`21.4%` zeros).
   - Single-core CPU benchmark (`taskset -c 0`, Broadwell 2.3 GHz AVX2 FP32): multi-stream batching (`B=32–64`) gave **6.5×–7.7× speedup** (`23–28h` for 350M toks even in FP32 on Broadwell; `~4–5h` est. on modern INT8/VNNI core).
 
 ---
 
-## 5. Strategic Direction & Next Steps (Path From `104.35 MB` → Sub-`100.42 MB`)
+## 5. Strategic Direction & Next Steps (Path From `103.39 MB` → Sub-`100.42 MB`)
 
-### Proven Core Insight
-Unlooped Fine-Grained MoE (`v10-moe17m-100k`: `16.85M` params, `8.67 MB` weights, `0.72×` active CPU MACs of v9) returned **`~1.5 MB` payload savings per `1 MB` of weights** — jumping from `107.10 MB → 104.35 MB` (`-2.75 MB` net, beating `tufazip v2`'s `105.39 MB`) with **28% less CPU decode compute** and only **2.34 epochs/expert**. By contrast, static Engram lookup tables only returned `0.30 MB/MB`.
+### Proven Core Insights
+- **Unlooped Fine-Grained MoE (`v10-moe17m`):** `16.85M` params (`L=8×1`, `1s256 + 8r256`, `top_k=2`, `0.72×` active CPU MACs of v9) hit **`104.35 MB`** at 100k steps (`-2.75 MB` net over `v9-100k`, `~1.5 MB/MB` weight efficiency). Multi-stream batched decoding (`B=32–64` on 1 CPU core) gives `6.5×–7.7×` speedup, comfortably inside the 50h single-core budget.
+- **Exact 1:1 MDL ECQAT (`ecqat.py`):** Optimizing `CE + (1/N_tok) · Rate_nats` with learnable per-row `Δ` + Laplace CDF + AdamW dropped **`104.35 → 103.39 MB` (`-0.96 MB`)** in just 15k steps (~25 min) by saving `-1.15 MB` of weights while losing only `+0.19 MB` payload — beating blunt uniform L1 (`+2.70 MB` worse) by `3.66 MB`.
 
-Multi-stream batched CPU decoding (`B=32–64` interleaved chunks on 1 core) gives a **6.5×–7.7× speedup** (`23–28h` for all 350M tokens even in FP32 on a 2.3 GHz Broadwell core; `~4–6h` est. on modern INT8/VNNI), so we still have substantial CPU and weight-budget headroom.
+### Highest-Leverage Next Experiments (Only `2.97 MB` From Hutter #1!)
 
-### Highest-Leverage Next Experiments (Only `3.93 MB` From Hutter #1!)
-
-1. **Compress MoE Expert Weights Below `3.49 bpw` (Fast ~25 min QAT branch from `v10-moe17m-100k`):**
-   - Branch directly from `runs/v10_moe17m_100k/model_ema.pt` (15k late-QAT steps) to test **3-bit routed expert QAT (`QAT_EXPERT_BITS=3`)** and/or **light L1/entropy regularization during late QAT** (`3.49 → ~2.3–2.6 bpw`). Could immediately shave `~1.5–2.5 MB` off `104.35 MB` with zero extra CPU FLOPs.
-2. **Find the MoE Parameter Sweet Spot (`20k` fast ablation, ~40 min):**
-   - Test **`v10-moe30m`** (`L=8×1`, `1s256 + 16r256`, `top_k=2`, `29.5M` params, **same `0.72×` CPU MACs**; use `B=128` streams on CPU so each expert still gets ~16 tokens/GEMM). Pair with compressed expert bits (`3b` or L1-sparsified `4b`) to see if `30M` beats `17M` on total `hutter_mb`.
-3. **Longer Schedule (`250k–400k` steps) + Giant Offline Teacher Distillation:**
-   - `v10-moe17m-100k` only saw `2.34` epochs/expert and was still dropping `-0.20 MB` every 2.5k steps at step 100k. Running `250k–400k` steps (~8–12h) and/or distilling from an offline 100M+ teacher (`TEACHER` / `KD_ALPHA` already wired in `train.py`) gives `~2–4 MB` at 0 archive bytes and 0 CPU FLOPs.
-4. **End-to-End `matchfeat.py` Upgrades (0 archive bytes, `O(1)` CPU):**
-   - Keep the same 6 `k` columns (more `k`s have diminishing returns), and upgrade retrieval quality via **active-match continuation** (`j+1` when `pred[t-1] == tok[t]`) and **2-way hash buckets** (most recent + longest/previous).
-5. **Optional Later Levers:**
+1. **End-to-End `matchfeat.py` Upgrades (0 archive bytes, `O(1)` CPU):**
+   - Keep the same 6 `k` columns (more `k`s have diminishing returns), and upgrade retrieval via **active-match continuation** (`j+1` when `pred[t-1] == tok[t]`) and **2-way hash buckets** (most recent + longest/previous). Validate with a fast 20k ablation before any long run (`~0.5–1.5 MB` expected).
+2. **Long BF16 Run (`250k–300k` steps) → Direct ECQAT Cooldown (`30k` steps) on `v10-moe17m`:**
+   - `v10-moe17m-100k` only saw `2.34` epochs/expert and was still dropping `-0.20 MB` every 2.5k steps at 100k.
+   - Train pure BF16 (`QAT_START=none`) all the way through main training/cooldown, then hand the converged BF16 checkpoint straight to `ecqat.py` for `30k` steps (avoiding any intermediate fixed-Int4 damage, and optionally adding Walsh-Hadamard rotation before ECQAT for another `~0.3–0.5 bpw`).
+3. **Offline Giant MoE Teacher → `v10-moe17m` Distillation (0 archive bytes, 0 extra CPU FLOPs):**
+   - `v10-moe30m` already hit `99.51 MB` payload in just 20k steps (44 min). Training a `30M–60M` MoE teacher for 100k steps (`~91–92 MB` payload) and distilling via `TEACHER` / `KD_ALPHA` into `v10-moe17m` during the 250k–300k run is pure free compression.
+4. **Optional Later Levers:**
    - Reversible Wikipedia XML metadata/caps preprocessor (`starlit`-style delta-`<id>` + tag/caps factoring) and/or CPU-viable chunk-level neural TTT (updating `lm_head.bias` / AdaRMS / rank-8 coda LoRA every 512–1024 tokens).
