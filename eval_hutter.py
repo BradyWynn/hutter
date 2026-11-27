@@ -62,9 +62,13 @@ def eval_strided(
     batch_size=16,
     tok_lens=None,
     n_bytes_total=1_000_000_000,
+    n_bytes_stream=None,
 ):
-    """Evaluate `model` (eager BF16) on evenly spaced strided windows across enwik9.
-    Returns both full-window [0..T-1] and full-context [T-stride..T-1] metrics."""
+    """Evaluate `model` (eager BF16) on evenly spaced strided windows across the stream.
+    Returns both full-window [0..T-1] and full-context [T-stride..T-1] metrics normalized to
+    original `n_bytes_total` (1 GB enwik9) while scaling payload accurately by `n_bytes_stream`."""
+    if n_bytes_stream is None:
+        n_bytes_stream = n_bytes_total
     dev = data.device
     offs = torch.arange(T + 1, device=dev)
     tok_lens_t = torch.from_numpy(tok_lens).to(dev) if tok_lens is not None else None
@@ -114,20 +118,34 @@ def eval_strided(
     scale_global = n_pos / n_bytes_total / math.log(2)
     full_bpb = full_loss * scale_global
     strided_bpb_global = strided_loss * scale_global
-    strided_bpb_local = (strided_nats / math.log(2) / strided_bytes) if strided_bytes > 0 else strided_bpb_global
+    if strided_bytes > 0:
+        stream_bpb_local = strided_nats / math.log(2) / strided_bytes
+        payload_mb = stream_bpb_local * n_bytes_stream / 8.0 / 1e6
+        strided_bpb_orig = payload_mb * 8e6 / n_bytes_total
+    else:
+        strided_bpb_orig = strided_bpb_global
+        payload_mb = strided_bpb_orig * n_bytes_total / 8.0 / 1e6
     return dict(
         full_loss=full_loss,
         full_bpb=full_bpb,
         strided_loss=strided_loss,
-        strided_bpb=strided_bpb_local,
+        strided_bpb=strided_bpb_orig,
         strided_bpb_global=strided_bpb_global,
-        payload_mb=strided_bpb_local * n_bytes_total / 8.0 / 1e6,
+        payload_mb=payload_mb,
     )
+
+
+def stream_bytes_for(data_prefix, default_bytes=1_000_000_000):
+    """Return raw byte length of the underlying stream tokenized into `data_prefix`."""
+    base = data_prefix.split(".split")[0].split(".nosplit")[0]
+    if os.path.exists(base):
+        return os.path.getsize(base)
+    return default_bytes
 
 
 @torch.no_grad()
 def extra_overhead_bytes(data_prefix):
-    """Detect any lossless transform overhead (e.g. enwik9.reord.meta.json permutation bytes)."""
+    """Detect any lossless transform overhead (e.g. enwik9.prep.meta.json metadata bytes)."""
     base = data_prefix.split(".split")[0].split(".nosplit")[0]
     meta_path = base + ".meta.json"
     if os.path.exists(meta_path):
@@ -146,6 +164,7 @@ def eval_hutter_suite(
     batch_size=16,
     tok_lens=None,
     n_bytes_total=1_000_000_000,
+    n_bytes_stream=None,
     vocab_bytes=0,
     extra_bytes=0,
     code_overhead_mb=0.05,
@@ -154,16 +173,18 @@ def eval_hutter_suite(
     expert_bits=4,
     qat_group=64,
 ):
-    """Evaluate raw model, EMA, and exact archive-quantized EMA, returning projected Hutter MB."""
+    """Evaluate raw model, EMA, and exact archive-quantized EMA, returning both LTCB (S2) and Hutter (S1+S2) MB."""
+    if n_bytes_stream is None:
+        n_bytes_stream = n_bytes_total
     out = {}
-    m_res = eval_strided(model, data, match_tables, starts, T, stride, batch_size, tok_lens, n_bytes_total)
+    m_res = eval_strided(model, data, match_tables, starts, T, stride, batch_size, tok_lens, n_bytes_total, n_bytes_stream)
     out["eval_loss"] = m_res["full_loss"]
     out["eval_bpb"] = m_res["full_bpb"]
     out["strided_bpb"] = m_res["strided_bpb"]
 
     target_m = ema if ema is not None else model
     if ema is not None:
-        e_res = eval_strided(ema, data, match_tables, starts, T, stride, batch_size, tok_lens, n_bytes_total)
+        e_res = eval_strided(ema, data, match_tables, starts, T, stride, batch_size, tok_lens, n_bytes_total, n_bytes_stream)
         out["ema_eval_loss"] = e_res["full_loss"]
         out["ema_eval_bpb"] = e_res["full_bpb"]
         out["ema_strided_bpb"] = e_res["strided_bpb"]
@@ -173,7 +194,7 @@ def eval_hutter_suite(
         base_strided = m_res["strided_bpb"]
 
     qm = quantize_model_copy(target_m, block_bits=block_bits, emb_bits=emb_bits, expert_bits=expert_bits, group_size=qat_group)
-    q_res = eval_strided(qm, data, match_tables, starts, T, stride, batch_size, tok_lens, n_bytes_total)
+    q_res = eval_strided(qm, data, match_tables, starts, T, stride, batch_size, tok_lens, n_bytes_total, n_bytes_stream)
     qs = quantize_stats(target_m, block_bits=block_bits, emb_bits=emb_bits, expert_bits=expert_bits, group_size=qat_group)
     del qm
 
@@ -182,6 +203,7 @@ def eval_hutter_suite(
     weight_mb = qs["entropy_mb"]
     payload_mb = q_res["payload_mb"]
     hutter_mb = payload_mb + weight_mb + vocab_mb + extra_mb + code_overhead_mb
+    hutter_s12_mb = payload_mb + 2.0 * weight_mb + 2.0 * vocab_mb + extra_mb + 2.0 * code_overhead_mb
 
     out["q_strided_bpb"] = q_res["strided_bpb"]
     out["q_drop_bpb"] = q_res["strided_bpb"] - base_strided
@@ -191,6 +213,7 @@ def eval_hutter_suite(
     out["vocab_mb"] = vocab_mb
     out["extra_mb"] = extra_mb
     out["hutter_mb"] = hutter_mb
+    out["hutter_s12_mb"] = hutter_s12_mb
     out["block_bpw"] = qs["block_bpw"]
     out["emb_bpw"] = qs["emb_bpw"]
     if qs["expert_params"] > 0:

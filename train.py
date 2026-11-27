@@ -9,10 +9,12 @@ import wandb
 import torch.nn.functional as F
 from model import GPT, GPTConfig, FP8Linear, QATLinear, MoEMLP, quantize_stats
 from muon import Muon
-from eval_hutter import vocab_info, extra_overhead_bytes, make_strided_starts, eval_hutter_suite
+from eval_hutter import vocab_info, extra_overhead_bytes, stream_bytes_for, make_strided_starts, eval_hutter_suite
 import matchfeat
 
-B, ACCUM, T = 16, 1, 2048
+B = int(os.environ.get("B", "16"))
+ACCUM = int(os.environ.get("ACCUM", "1"))
+T = int(os.environ.get("T", "2048"))
 STEPS = int(os.environ.get("STEPS", "100000"))
 LOG = int(os.environ.get("LOG", "100"))
 CKPT = int(os.environ.get("CKPT", "1000"))
@@ -85,6 +87,7 @@ else:
 
 torch.set_float32_matmul_precision("high")
 N_BYTES = os.path.getsize("enwik9")
+N_BYTES_STREAM = stream_bytes_for(DATA, N_BYTES)
 TOK_LENS, VOCAB_BYTES, VOCAB = vocab_info(DATA)
 EXTRA_BYTES = extra_overhead_bytes(DATA)
 if DATA == "enwik9":
@@ -406,7 +409,8 @@ wandb.init(
         KD_ALPHA=KD_ALPHA if TEACHER else None,
         KD_TEMP=KD_TEMP if TEACHER else None,
         MATCH_K=MATCH_K,
-        MATCH_TABLE_BITS=matchfeat.TABLE_BITS,
+        MATCH_MODE=matchfeat.MATCH_MODE,
+        MATCH_TABLE_BITS=matchfeat.TABLE_BITS_V2 if matchfeat.MATCH_MODE == "v2" else matchfeat.TABLE_BITS,
         MATCH_DIST_EDGES=matchfeat.DIST_EDGES,
         params=sum(p.numel() for p in model.parameters()),
         **vars(cfg),
@@ -428,7 +432,7 @@ if INIT_FROM or RESUME:
     ev0 = eval_hutter_suite(
         model, ema, data, match_tables, eval_starts, T,
         stride=EVAL_STRIDE, batch_size=B, tok_lens=TOK_LENS,
-        n_bytes_total=N_BYTES, vocab_bytes=VOCAB_BYTES, extra_bytes=EXTRA_BYTES,
+        n_bytes_total=N_BYTES, n_bytes_stream=N_BYTES_STREAM, vocab_bytes=VOCAB_BYTES, extra_bytes=EXTRA_BYTES,
         block_bits=QAT_BLOCK_BITS, emb_bits=QAT_EMB_BITS, expert_bits=QAT_EXPERT_BITS, qat_group=QAT_GROUP,
     )
     print(
@@ -520,7 +524,7 @@ for step in range(start_step, STEPS):
         ev = eval_hutter_suite(
             model, ema, data, match_tables, eval_starts, T,
             stride=EVAL_STRIDE, batch_size=B, tok_lens=TOK_LENS,
-            n_bytes_total=N_BYTES, vocab_bytes=VOCAB_BYTES, extra_bytes=EXTRA_BYTES,
+            n_bytes_total=N_BYTES, n_bytes_stream=N_BYTES_STREAM, vocab_bytes=VOCAB_BYTES, extra_bytes=EXTRA_BYTES,
             block_bits=QAT_BLOCK_BITS, emb_bits=QAT_EMB_BITS, expert_bits=QAT_EXPERT_BITS, qat_group=QAT_GROUP,
         )
         print(
@@ -529,7 +533,7 @@ for step in range(start_step, STEPS):
             + f" | q_strided {ev['q_strided_bpb']:.4f} ({ev['q_drop_bpb']:+.4f})"
             + f" | wt {ev['weight_mb']:.2f}MB"
             + (f" (exp {ev['expert_bpw']:.2f}bpw)" if "expert_bpw" in ev else "")
-            + f" | HUTTER {ev['hutter_mb']:.2f} MB"
+            + f" | S2 {ev['hutter_mb']:.2f} MB | S1+S2 {ev['hutter_s12_mb']:.2f} MB"
         )
         wandb.log(ev, step=step + 1)
         torch.save(model.state_dict(), os.path.join(OUT_DIR, "model.pt"))
