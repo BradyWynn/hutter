@@ -105,3 +105,34 @@ Always evaluate on **`EVAL_WINDOWS=2048`**, **`T=2048`**, **`stride=1024`** (`ev
    - Wire MoE teacher support into `train.py` (and external teacher into `ecqat.py`), distill `~80M` teacher intelligence into our `~4 MB` (`14–18` pass) looped student + `SEMCACHE` + `matchfeat v3` + `prep v2`.
 6. **Final Self-Extracting C/AVX-VNNI Packager & Single-Core Benchmark:**
    - Verify full bit-exact `enwik9` decompression + KV-cached sliding-window inference (`1×` forward/tok, full `2048` ctx) inside `<10 GB RAM` and `<50h` on 1 CPU core.
+
+
+---
+
+## 6. Strategic Analysis: Path to `< 92.45 MB` (`S1 + S2`) & Bridging `split4096` with Bit/Byte Online Models
+
+### 6.1 Honest Byte-Budget Accounting (Why Static ~4 MB Neural Alone Hits a Wall)
+- Scaling `L=6×3` (`110.48 MB` `S1+S2` @ 20k) to `250k+` steps + `60–100M` teacher distillation (`RATE_MULT=2.0` ECQAT) should yield ~`-7 to -8 MB` (`~102–103 MB` `S1+S2`).
+- `prep v2` (Rambot US Census factoring, `<comment>` inline, metadata delta predictors) + **post-separation article reordering** (revisiting `reorder_enwik9.py` now that XML `<id>` tags are separated) should yield ~`-4 to -5 MB` (`~97–99 MB` `S1+S2`).
+- **Remaining `-5 to -7 MB` gap to `< 92.45 MB`:** A static `~4 MB` model (~32M bits of weights) cannot memorize millions of rare proper nouns, foreign names, taxonomies, infobox schemas, and table column strides that recur across 1 GB outside `T=2048` attention and without exact long matches for `matchfeat`.
+- **`cmix-neif 2.0` (`93.39 MB` = `89.35 MB S2 + 4.04 MB S1`) is a hybrid:** Its `4.04 MB` `S1` ships an offline quantized Transformer *combined* with 6 GB of zero-archive-cost online memory (`cmix` statistical models, PPMd, online `BITLSTM`, `SEMCACHE`) + Census/reordering prep. Pure neural (`~98–103 MB`) and pure `cmix` (`~103–108 MB`) lose to the hybrid by `~8–10 MB` because offline world knowledge/semantics and unbounded online prefix memory are orthogonal.
+- Online Transformer weight backprop is ruled out both by single-core CPU time (`50h`) and by `ttt_bench.py` (`-0.008 MB` best).
+
+### 6.2 Solving the Token-Level (`split4096`) vs. Bit/Byte-Level (`cmix`/PPMd) Mismatch
+**We do NOT need to abandon `split4096` tokenization to mix with bit/byte-level online models.** Keeping the Transformer at the token level is actually a **`2.89×` CPU speed advantage** over a byte-level Transformer (`301.5M` vs. `871M` forward passes on `enwik9.prep`).
+
+**Exact Token-Trie Bit Bridge (zero changes to Transformer training, zero theoretical bit overhead):**
+- Because canonical BPE (`bpe_tok.py`) is a deterministic bijection between raw bytes $B$ and token sequences $T$, $H(T) = H(B)$ identically.
+- **Step 1:** Run the `split4096` Transformer **once per token** to get $P_{\text{LLM}}(t_i = v)$ for $v \in \{0..4095\}$ (plus optional `SEMCACHE` logit injection). Optionally mask illegal non-canonical BPE transitions after the previous token for a small free gain.
+- **Step 2:** Project the 4096 token probabilities onto a tiny static byte/bit trie over the vocabulary (microseconds/token). Every internal byte/bit branch has exact conditional probability:
+  $$P_{\text{LLM}}(\text{bit}_k = 1 \mid \text{prefix}) = \frac{\sum_{v \in \text{subtree}_1} P_{\text{LLM}}(v)}{\sum_{v \in \text{subtree}_0 \cup \text{subtree}_1} P_{\text{LLM}}(v)}$$
+  Internal trie nodes that are also valid shorter tokens (e.g. `"th"` vs. `"the"`) have one binary `STOP_TOKEN` vs. `CONTINUE` decision.
+- **Step 3:** Mix bit-by-bit with byte/bit-level online models (`PPMd`, word/stem, sparse, indirect, table/record-stride, online `BITLSTM`, or `cmix` predictors):
+  - On every **byte/bit branch**, all online models see the exact decoded byte history $b_1, \dots, b_{\text{cur}}$; renormalize their next-byte distribution over the valid child bytes of the current trie node and mix with $P_{\text{LLM}}(\text{bit})$ in stretched/logit space via a context-gated logistic mixer + SSE.
+  - On **`STOP_TOKEN` branches**, use $P_{\text{LLM}}(\text{STOP})$ mixed with $P_{\text{online}}(\text{next byte} \in \text{children})$.
+- **Why this fixes `online_hash_bench.py` (`-0.30 MB`):** Instead of uncalibrated fixed-LR token n-gram logit deltas, bit/byte-level online models capture sub-token OOV morphology, numbers, foreign names, and structured tables, while the context-gated logistic mixer + SSE dynamically shifts weight between the Transformer (novel English prose) and online models (infoboxes, lists, foreign text, repeated templates).
+
+### 6.3 Recommended Execution Order (CPU-First, Then Big GPU Run)
+1. **CPU-only (no GPU needed):** Finalize **`prep_enwik9.py` v2** (Rambot Census factoring, `<comment>` inline, metadata delta predictors) + **post-separation article reordering** (category/link-graph/title similarity), SHA-256 verified. Lock in the final preprocessed stream *before* spending GPU hours on long training.
+2. **CPU-only (no GPU needed):** Prototype the **Token-Trie Bit Bridge** + a **lean online mixing backend** in C (Option B: order-12+ byte PPMd + word/sparse/record models + tiny online `BITLSTM` + logistic mixer + 2-stage SSE; with the exact same trie interface ready for Option A: plugging directly into a stripped-down `cmix` predictor suite if Option B stops around `93–94 MB`).
+3. **GPU phase (once `prep v2` + reordering are frozen):** Train the `60–100M` BF16 offline teacher → distill into compact looped MoE (`L=6×3` or `L=6×4`, `~4 MB` weights @ `RATE_MULT=2.0` ECQAT) + `SEMCACHE` (`hn` kNN retrieval), then feed its token probabilities through the Token-Trie Bit Bridge + online mixer.
